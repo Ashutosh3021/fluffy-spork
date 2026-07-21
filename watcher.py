@@ -41,6 +41,22 @@ REQUEST_TIMEOUT: int = int(os.environ.get("REQUEST_TIMEOUT", "15"))
 # Port that Flask listens on (Render injects PORT automatically).
 PORT: int = int(os.environ.get("PORT", "8080"))
 
+# Wake-up configuration: hit multiple endpoints over ~50s to wake cold services.
+WAKE_UP_ENABLED: bool = os.environ.get("WAKE_UP_ENABLED", "true").lower() == "true"
+WAKE_UP_INTERVAL: int = int(os.environ.get("WAKE_UP_INTERVAL", "9"))
+WAKE_UP_ENDPOINTS: list[str] = ["/health", "/", "/bad", "/demo", "/health", "/api"]
+
+# Per-URL custom endpoints (JSON). Falls back to WAKE_UP_ENDPOINTS for unlisted URLs.
+# Example: {"https://foo.onrender.com": ["/health", "/api"]}
+import json as _json
+WAKE_UP_ENDPOINTS_MAP: dict[str, list[str]] = {}
+try:
+    _raw_map = os.environ.get("WAKE_UP_ENDPOINTS_MAP", "")
+    if _raw_map:
+        WAKE_UP_ENDPOINTS_MAP = _json.loads(_raw_map)
+except (_json.JSONDecodeError, ValueError):
+    logger.warning("⚠️  WAKE_UP_ENDPOINTS_MAP is not valid JSON. Using default endpoints.")
+
 # ---------------------------------------------------------------------------
 # Flask app — exposes /health so the main pinger can ping this service back
 # ---------------------------------------------------------------------------
@@ -104,6 +120,56 @@ def check_pinger() -> None:
         logger.error("❌  ERROR      | %s | %s", MAIN_PINGER_URL, exc)
 
 
+def parse_base_url(url: str) -> str:
+    """Extract scheme + host from a full URL. 'https://foo.onrender.com/health' → 'https://foo.onrender.com'."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def wake_up_pinger() -> bool:
+    """
+    Cold-start wake-up: hit multiple pinger endpoints over ~50s so Render
+    registers the pinger as active. Returns True if at least one endpoint responded.
+    """
+    if not MAIN_PINGER_URL:
+        logger.warning(
+            "⚠️  MAIN_PINGER_URL is not set. "
+            "The watcher will keep running but won't wake up anything."
+        )
+        return False
+
+    base = parse_base_url(MAIN_PINGER_URL)
+    endpoints = WAKE_UP_ENDPOINTS_MAP.get(base, WAKE_UP_ENDPOINTS)
+    logger.info("🔥  WAKE-UP  | %s | hitting %d endpoints over ~%ds",
+                base, len(endpoints), WAKE_UP_INTERVAL * len(endpoints))
+
+    any_success = False
+    for i, path in enumerate(endpoints):
+        full_url = base + path
+        try:
+            response = requests.get(full_url, timeout=REQUEST_TIMEOUT)
+            logger.info("✅  WAKE HIT | %s | HTTP %s", full_url, response.status_code)
+            any_success = True
+        except requests.exceptions.MissingSchema:
+            logger.error("❌  BAD URL   | %s | URL is not valid (missing schema)", full_url)
+        except requests.exceptions.ConnectionError:
+            logger.error("❌  CONN ERR  | %s | Could not establish a connection", full_url)
+        except requests.exceptions.Timeout:
+            logger.error("❌  TIMEOUT   | %s | Request timed out after %ss", full_url, REQUEST_TIMEOUT)
+        except requests.exceptions.RequestException as exc:
+            logger.error("❌  ERROR     | %s | %s", full_url, exc)
+
+        if i < len(endpoints) - 1:
+            time.sleep(WAKE_UP_INTERVAL)
+
+    if any_success:
+        logger.info("✔️  WAKE-UP  | %s | complete", base)
+    else:
+        logger.warning("⚠️  WAKE-UP  | %s | failed — no endpoint responded", base)
+    return any_success
+
+
 def watcher_loop() -> None:
     """
     Background thread: check the main pinger immediately on startup,
@@ -115,8 +181,14 @@ def watcher_loop() -> None:
         MAIN_PINGER_URL or "(not set)",
     )
 
+    first_cycle = True
+    wake_up_failed = False
     while True:
-        check_pinger()
+        if (first_cycle or wake_up_failed) and WAKE_UP_ENABLED:
+            wake_up_failed = not wake_up_pinger()
+        else:
+            check_pinger()
+        first_cycle = False
         logger.info(
             "💤  Sleeping for %d seconds (%d min) until next check.",
             PING_INTERVAL,

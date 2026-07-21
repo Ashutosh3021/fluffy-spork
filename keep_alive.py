@@ -40,6 +40,22 @@ REQUEST_TIMEOUT: int = int(os.environ.get("REQUEST_TIMEOUT", "15"))
 # Port that Flask listens on (Render injects PORT automatically).
 PORT: int = int(os.environ.get("PORT", "8080"))
 
+# Wake-up configuration: hit multiple endpoints over ~50s to wake cold services.
+WAKE_UP_ENABLED: bool = os.environ.get("WAKE_UP_ENABLED", "true").lower() == "true"
+WAKE_UP_INTERVAL: int = int(os.environ.get("WAKE_UP_INTERVAL", "9"))
+WAKE_UP_ENDPOINTS: list[str] = ["/health", "/", "/bad", "/demo", "/health", "/api"]
+
+# Per-URL custom endpoints (JSON). Falls back to WAKE_UP_ENDPOINTS for unlisted URLs.
+# Example: {"https://foo.onrender.com": ["/health", "/api"], "https://bar.onrender.com": ["/health", "/status"]}
+import json as _json
+WAKE_UP_ENDPOINTS_MAP: dict[str, list[str]] = {}
+try:
+    _raw_map = os.environ.get("WAKE_UP_ENDPOINTS_MAP", "")
+    if _raw_map:
+        WAKE_UP_ENDPOINTS_MAP = _json.loads(_raw_map)
+except (_json.JSONDecodeError, ValueError):
+    logger.warning("⚠️  WAKE_UP_ENDPOINTS_MAP is not valid JSON. Using default endpoints for all URLs.")
+
 # ---------------------------------------------------------------------------
 # Flask app — exposes /health so the watcher can verify we are running
 # ---------------------------------------------------------------------------
@@ -70,6 +86,50 @@ def parse_urls(raw: str) -> list[str]:
     return [url.strip() for url in raw.split(",") if url.strip()]
 
 
+def parse_base_url(url: str) -> str:
+    """Extract scheme + host from a full URL. 'https://foo.onrender.com/health' → 'https://foo.onrender.com'."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def wake_up_url(url: str) -> bool:
+    """
+    Cold-start wake-up: hit multiple endpoints over ~50s so Render
+    registers the service as active. One failed hit doesn't stop the cycle.
+    Returns True if at least one endpoint responded successfully.
+    """
+    base = parse_base_url(url)
+    endpoints = WAKE_UP_ENDPOINTS_MAP.get(base, WAKE_UP_ENDPOINTS)
+    logger.info("🔥  WAKE-UP  | %s | hitting %d endpoints over ~%ds",
+                base, len(endpoints), WAKE_UP_INTERVAL * len(endpoints))
+
+    any_success = False
+    for i, path in enumerate(endpoints):
+        full_url = base + path
+        try:
+            response = requests.get(full_url, timeout=REQUEST_TIMEOUT)
+            logger.info("✅  WAKE HIT | %s | HTTP %s", full_url, response.status_code)
+            any_success = True
+        except requests.exceptions.MissingSchema:
+            logger.error("❌  BAD URL   | %s | URL is not valid (missing schema)", full_url)
+        except requests.exceptions.ConnectionError:
+            logger.error("❌  CONN ERR  | %s | Could not establish a connection", full_url)
+        except requests.exceptions.Timeout:
+            logger.error("❌  TIMEOUT   | %s | Request timed out after %ss", full_url, REQUEST_TIMEOUT)
+        except requests.exceptions.RequestException as exc:
+            logger.error("❌  ERROR     | %s | %s", full_url, exc)
+
+        if i < len(endpoints) - 1:
+            time.sleep(WAKE_UP_INTERVAL)
+
+    if any_success:
+        logger.info("✔️  WAKE-UP  | %s | complete", base)
+    else:
+        logger.warning("⚠️  WAKE-UP  | %s | failed — no endpoint responded", base)
+    return any_success
+
+
 def ping_url(url: str) -> None:
     """
     Send a single GET request to *url* and log the outcome.
@@ -89,17 +149,29 @@ def ping_url(url: str) -> None:
         logger.error("❌  ERROR     | %s | %s", url, exc)
 
 
-def ping_all(urls: list[str]) -> None:
-    """Ping every URL in the list sequentially."""
+def ping_all(urls: list[str], first_cycle: bool = False,
+             retry_urls: set[str] | None = None) -> set[str]:
+    """Ping every URL in the list sequentially. Returns set of URLs that failed wake-up."""
     if not urls:
         logger.warning("⚠️  No URLs configured. Set the SITES_URLS environment variable.")
-        return
+        return set()
 
-    logger.info("🔄  Starting ping cycle — %d URL(s)", len(urls))
+    failed: set[str] = set()
+    logger.info("🔄  Starting ping cycle — %d URL(s) %s", len(urls),
+                "(wake-up)" if first_cycle else "")
     for url in urls:
-        ping_url(url)
+        if first_cycle and WAKE_UP_ENABLED:
+            if not wake_up_url(url):
+                failed.add(url)
+        elif url in (retry_urls or set()):
+            logger.info("🔁  RETRY    | %s | re-attempting wake-up", url)
+            if not wake_up_url(url):
+                failed.add(url)
+        else:
+            ping_url(url)
     logger.info("✔️  Ping cycle complete. Next cycle in %d seconds (%d min).",
                 PING_INTERVAL, PING_INTERVAL // 60)
+    return failed
 
 
 def pinger_loop() -> None:
@@ -117,8 +189,11 @@ def pinger_loop() -> None:
 
     logger.info("🚀  Pinger started. Interval: %ds | URLs: %d", PING_INTERVAL, len(urls))
 
+    first_cycle = True
+    failed_urls: set[str] = set()
     while True:
-        ping_all(urls)
+        failed_urls = ping_all(urls, first_cycle=first_cycle, retry_urls=failed_urls)
+        first_cycle = False
         time.sleep(PING_INTERVAL)
 
 
