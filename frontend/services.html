@@ -10,6 +10,11 @@
     <nav class="navbar">
         <div class="container">
             <div class="navbar-brand">Fluffy Spork</div>
+            <button class="mobile-menu-btn" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
             <ul class="navbar-nav">
                 <li><a href="dashboard.html" class="nav-link">Dashboard</a></li>
                 <li><a href="services.html" class="nav-link active">Services</a></li>
@@ -33,11 +38,11 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>Name / URL</th>
-                            <th>Method</th>
-                            <th>Interval</th>
-                            <th>Status</th>
-                            <th>Actions</th>
+                            <th data-label="Name / URL">Name / URL</th>
+                            <th data-label="Method">Method</th>
+                            <th data-label="Interval">Interval</th>
+                            <th data-label="Status">Status</th>
+                            <th data-label="Actions">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="services-table-body">
@@ -71,14 +76,14 @@
 
                     tbody.innerHTML = services.map(s => `
                         <tr>
-                            <td>
+                            <td data-label="Name / URL">
                                 <strong>${App.escapeHtml(s.name)}</strong><br>
                                 <small class="text-muted">${App.escapeHtml(s.url)}</small>
                             </td>
-                            <td><span class="badge badge-muted">${App.escapeHtml(s.method)}</span></td>
-                            <td>${s.interval_minutes}m</td>
-                            <td>${s.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-muted">Paused</span>'}</td>
-                            <td>
+                            <td data-label="Method"><span class="badge badge-muted">${App.escapeHtml(s.method)}</span></td>
+                            <td data-label="Interval">${s.interval_minutes}m</td>
+                            <td data-label="Status">${s.active ? '<span class="badge badge-success">Active</span>' : '<span class="badge badge-muted">Paused</span>'}</td>
+                            <td data-label="Actions">
                                 <div class="flex gap-1">
                                     <button class="btn btn-sm btn-outline test-btn" data-id="${s.id}">Test</button>
                                     <button class="btn btn-sm btn-outline toggle-btn" data-id="${s.id}" data-active="${s.active}">

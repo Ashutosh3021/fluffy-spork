@@ -10,6 +10,11 @@
     <nav class="navbar">
         <div class="container">
             <div class="navbar-brand">Fluffy Spork</div>
+            <button class="mobile-menu-btn" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
             <ul class="navbar-nav">
                 <li><a href="dashboard.html" class="nav-link active">Dashboard</a></li>
                 <li><a href="services.html" class="nav-link">Services</a></li>
@@ -52,10 +57,10 @@
                 <table>
                     <thead>
                         <tr>
-                            <th>Time</th>
-                            <th>Service</th>
-                            <th>Status</th>
-                            <th>Duration</th>
+                            <th data-label="Time">Time</th>
+                            <th data-label="Service">Service</th>
+                            <th data-label="Status">Status</th>
+                            <th data-label="Duration">Duration</th>
                         </tr>
                     </thead>
                     <tbody id="history-table-body">
@@ -102,10 +107,10 @@
 
                             return `
                                 <tr>
-                                    <td>${App.formatDate(h.timestamp)}</td>
-                                    <td>${App.escapeHtml(serviceName)}</td>
-                                    <td>${statusBadge}</td>
-                                    <td>${h.duration_ms ? h.duration_ms + ' ms' : '-'}</td>
+                                    <td data-label="Time">${App.formatDate(h.timestamp)}</td>
+                                    <td data-label="Service">${App.escapeHtml(serviceName)}</td>
+                                    <td data-label="Status">${statusBadge}</td>
+                                    <td data-label="Duration">${h.duration_ms ? h.duration_ms + ' ms' : '-'}</td>
                                 </tr>
                             `;
                         }).join('');

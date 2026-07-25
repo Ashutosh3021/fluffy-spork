@@ -47,6 +47,16 @@ class App {
                 Auth.logout();
             });
         }
+
+        const mobileMenuBtn = document.querySelector('.mobile-menu-btn');
+        const navbarNav = document.querySelector('.navbar-nav');
+
+        if (mobileMenuBtn && navbarNav) {
+            mobileMenuBtn.addEventListener('click', () => {
+                mobileMenuBtn.classList.toggle('active');
+                navbarNav.classList.toggle('show');
+            });
+        }
     }
 
     static escapeHtml(unsafe) {
