@@ -3,7 +3,7 @@ import uuid
 import time
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import List, Optional, Dict
 
@@ -11,7 +11,6 @@ import re
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from datetime import timezone
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -92,8 +91,7 @@ def health():
 
 @app.route("/api/status")
 def status():
-    # A simple status endpoint that returns basic info
-    uptime_seconds = time.time() - start_time if 'start_time' in globals() else 0
+    uptime_seconds = time.time() - start_time
     return jsonify({
         "status": "ok",
         "version": "1.0.0",
@@ -188,6 +186,65 @@ def update_profile():
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _do_ping(url: str) -> dict:
+    """Ping a single URL and return result dict."""
+    start = time.time()
+    try:
+        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+        elapsed_ms = int((time.time() - start) * 1000)
+        return {
+            "url": url,
+            "success": True,
+            "status_code": resp.status_code,
+            "response_time_ms": elapsed_ms,
+            "error": None
+        }
+    except Exception as e:
+        elapsed_ms = int((time.time() - start) * 1000)
+        return {
+            "url": url,
+            "success": False,
+            "status_code": None,
+            "response_time_ms": elapsed_ms,
+            "error": str(e)
+        }
+
+
+# ---------------------------------------------------------------------------
+# Test-before-create (no service ID required)
+# ---------------------------------------------------------------------------
+@app.route("/api/test", methods=["POST"])
+@require_auth
+def test_url():
+    """Test one or more URLs without saving a service."""
+    data = request.json or {}
+
+    base_url = data.get("base_url") or data.get("url")
+    endpoints = data.get("endpoints")
+
+    if not base_url:
+        return jsonify({"error": "base_url (or url) is required"}), 400
+
+    # If endpoints provided, ping base_url + each endpoint
+    # If no endpoints, treat base_url as a full URL and ping it directly
+    results = []
+    if endpoints and isinstance(endpoints, list) and len(endpoints) > 0:
+        for endpoint in endpoints:
+            full = base_url.rstrip("/") + "/" + str(endpoint).lstrip("/")
+            result = _do_ping(full)
+            result["endpoint"] = endpoint
+            results.append(result)
+    else:
+        result = _do_ping(base_url)
+        result["endpoint"] = "/"
+        results.append(result)
+
+    return jsonify({"results": results}), 200
+
+
+# ---------------------------------------------------------------------------
 # Service Management Endpoints
 # ---------------------------------------------------------------------------
 @app.route("/api/services", methods=["GET"])
@@ -203,30 +260,32 @@ def create_service():
     user = get_current_user()
     data = request.json or {}
 
-    base_url = data.get("base_url")
+    # Accept both base_url and url for convenience
+    base_url = data.get("base_url") or data.get("url")
     endpoints = data.get("endpoints", ["/health"])
 
     if not base_url:
         return jsonify({"error": "base_url is required"}), 400
 
     interval_seconds = data.get("interval_seconds")
+    interval_minutes = data.get("interval_minutes")
     pings_per_day = data.get("pings_per_day")
 
     if interval_seconds:
         interval = int(interval_seconds)
+    elif interval_minutes:
+        interval = int(interval_minutes) * 60
     elif pings_per_day:
-        # 24 * 60 * 60 = 86400 seconds in a day
         interval = int(86400 / int(pings_per_day))
     else:
-        # Default to 14 minutes (840 seconds)
-        interval = 840
+        interval = 840  # default 14 minutes
 
     service_id = str(uuid.uuid4())
     service = Service(
         id=service_id,
         user_id=user.id,
         base_url=base_url,
-        endpoints=endpoints,
+        endpoints=endpoints if isinstance(endpoints, list) else ["/health"],
         interval_seconds=interval
     )
     db_services[service_id] = service
@@ -250,12 +309,14 @@ def update_service(service_id):
         return jsonify({"error": "Service not found"}), 404
 
     data = request.json or {}
-    if "base_url" in data:
-        service.base_url = data["base_url"]
+    if "base_url" in data or "url" in data:
+        service.base_url = data.get("base_url") or data.get("url")
     if "endpoints" in data:
         service.endpoints = data["endpoints"]
     if "interval_seconds" in data:
         service.interval_seconds = int(data["interval_seconds"])
+    elif "interval_minutes" in data:
+        service.interval_seconds = int(data["interval_minutes"]) * 60
     elif "pings_per_day" in data:
         service.interval_seconds = int(86400 / int(data["pings_per_day"]))
 
@@ -283,28 +344,9 @@ def test_service(service_id):
     results = []
     for endpoint in service.endpoints:
         url = service.base_url.rstrip("/") + "/" + endpoint.lstrip("/")
-        start_time = time.time()
-        try:
-            resp = requests.get(url, timeout=REQUEST_TIMEOUT)
-            elapsed_ms = int((time.time() - start_time) * 1000)
-            results.append({
-                "endpoint": endpoint,
-                "url": url,
-                "success": True,
-                "status_code": resp.status_code,
-                "response_time_ms": elapsed_ms,
-                "error": None
-            })
-        except Exception as e:
-            elapsed_ms = int((time.time() - start_time) * 1000)
-            results.append({
-                "endpoint": endpoint,
-                "url": url,
-                "success": False,
-                "status_code": None,
-                "response_time_ms": elapsed_ms,
-                "error": str(e)
-            })
+        result = _do_ping(url)
+        result["endpoint"] = endpoint
+        results.append(result)
 
     return jsonify({"results": results}), 200
 
@@ -318,20 +360,16 @@ def get_history():
     user = get_current_user()
     service_id = request.args.get("service_id")
 
-    # User can only see records for their services
     user_service_ids = {s.id for s in db_services.values() if s.user_id == user.id}
 
     if service_id and service_id not in user_service_ids:
         return jsonify({"error": "Service not found or unauthorized"}), 404
 
     records = []
-    # Reverse order for recent first (simple approach)
     for r in reversed(db_ping_records):
         if r.service_id in user_service_ids:
             if not service_id or r.service_id == service_id:
                 records.append(r.__dict__)
-
-        # Arbitrary limit to prevent huge responses
         if len(records) >= 100:
             break
 
@@ -373,38 +411,23 @@ def get_analytics(service_id):
 # Background Execution Engine
 # ---------------------------------------------------------------------------
 def ping_url(url: str, service_id: str, endpoint: str):
-    start_time = time.time()
-    try:
-        response = requests.get(url, timeout=REQUEST_TIMEOUT)
-        elapsed_ms = int((time.time() - start_time) * 1000)
-
-        record = PingRecord(
-            id=str(uuid.uuid4()),
-            service_id=service_id,
-            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            endpoint=endpoint,
-            status_code=response.status_code,
-            success=True,
-            response_time_ms=elapsed_ms,
-            error=None
-        )
-        logger.info(f"✅  PING OK   | {url} | HTTP {response.status_code} | {elapsed_ms}ms")
-    except Exception as exc:
-        elapsed_ms = int((time.time() - start_time) * 1000)
-        record = PingRecord(
-            id=str(uuid.uuid4()),
-            service_id=service_id,
-            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            endpoint=endpoint,
-            status_code=None,
-            success=False,
-            response_time_ms=elapsed_ms,
-            error=str(exc)
-        )
-        logger.error(f"❌  ERROR     | {url} | {exc}")
+    result = _do_ping(url)
+    record = PingRecord(
+        id=str(uuid.uuid4()),
+        service_id=service_id,
+        timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        endpoint=endpoint,
+        status_code=result["status_code"],
+        success=result["success"],
+        response_time_ms=result["response_time_ms"],
+        error=result["error"]
+    )
+    if result["success"]:
+        logger.info(f"✅  PING OK   | {url} | HTTP {result['status_code']} | {result['response_time_ms']}ms")
+    else:
+        logger.error(f"❌  ERROR     | {url} | {result['error']}")
 
     db_ping_records.append(record)
-    # Keep memory in check (keep last 10,000 records)
     if len(db_ping_records) > 10000:
         db_ping_records.pop(0)
 
@@ -432,12 +455,11 @@ def pinger_loop():
                 logger.info(f"🔄  Pinging service {service_id} ({service.base_url})")
                 for endpoint in service.endpoints:
                     url = service.base_url.rstrip("/") + "/" + endpoint.lstrip("/")
-                    # Run synchronously for simplicity and backpressure
                     ping_url(url, service_id, endpoint)
                     time.sleep(9)  # Wake-up delay
                 service.last_pinged_at = time.time()
 
-        time.sleep(1)  # Sleep briefly to avoid high CPU usage
+        time.sleep(1)
 
 # Start the background thread
 pinger_thread = threading.Thread(target=pinger_loop, daemon=True, name="pinger")
