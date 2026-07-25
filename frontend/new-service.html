@@ -47,6 +47,17 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="method">HTTP Method</label>
+                    <select id="method" class="form-control">
+                        <option value="GET" selected>GET (recommended)</option>
+                        <option value="HEAD">HEAD (lighter, no body)</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                    </select>
+                    <small class="text-muted">GET is best for most keep-alive use cases</small>
+                </div>
+
+                <div class="form-group">
                     <label for="interval">Check Interval</label>
                     <select id="interval" class="form-control">
                         <option value="5">Every 5 minutes</option>
@@ -65,7 +76,6 @@
             </form>
         </div>
 
-        <!-- Test Results Area -->
         <div id="test-results" class="card mt-3" style="display: none;">
             <h3>Test Results</h3>
             <div id="test-content" class="mt-2"></div>
@@ -90,15 +100,16 @@
                     ? endpointsRaw.split(',').map(e => e.trim()).filter(Boolean)
                     : ['/health'];
                 const intervalMinutes = parseInt(document.getElementById('interval').value, 10);
+                const method = document.getElementById('method').value;
 
                 return {
                     base_url: baseUrl,
                     endpoints: endpoints,
-                    interval_minutes: intervalMinutes
+                    interval_minutes: intervalMinutes,
+                    method: method
                 };
             }
 
-            // ---- Create Service ----
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 App.hideAlert('service-alert');
@@ -121,7 +132,6 @@
                 }
             });
 
-            // ---- Test Before Create ----
             document.getElementById('test-btn').addEventListener('click', async () => {
                 App.hideAlert('service-alert');
 
@@ -137,12 +147,12 @@
                 try {
                     const data = await ApiClient.post('/test', {
                         base_url: payload.base_url,
-                        endpoints: payload.endpoints
+                        endpoints: payload.endpoints,
+                        method: payload.method
                     });
 
-                    // Render results
                     let html = '<div class="table-responsive"><table class="table"><thead><tr>'
-                        + '<th>Endpoint</th><th>Status</th><th>Time</th><th>Result</th>'
+                        + '<th>Method</th><th>Endpoint</th><th>Status</th><th>Time</th><th>Result</th>'
                         + '</tr></thead><tbody>';
 
                     (data.results || []).forEach(r => {
@@ -151,6 +161,7 @@
                             ? '<span class="badge badge-success">OK</span>'
                             : '<span class="badge badge-error">FAIL</span>';
                         html += `<tr>
+                            <td><span class="badge badge-muted">${r.method || payload.method}</span></td>
                             <td><code>${r.endpoint || '/'}</code><br><small>${r.url || ''}</small></td>
                             <td>${r.status_code ?? '—'}</td>
                             <td>${r.response_time_ms} ms</td>
