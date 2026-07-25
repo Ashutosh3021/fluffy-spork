@@ -33,43 +33,34 @@
         <div class="card">
             <form id="service-form">
                 <div class="form-group">
-                    <label for="name">Service Name</label>
-                    <input type="text" id="name" class="form-control" required placeholder="My Web App">
+                    <label for="base_url">Base URL</label>
+                    <input type="url" id="base_url" class="form-control" required
+                           placeholder="https://my-app.onrender.com">
+                    <small class="text-muted">Root URL of the service (without path)</small>
                 </div>
 
                 <div class="form-group">
-                    <label for="url">Target URL</label>
-                    <input type="url" id="url" class="form-control" required placeholder="https://example.com/api/ping">
-                </div>
-
-                <div class="form-group">
-                    <label for="method">HTTP Method</label>
-                    <select id="method" class="form-control">
-                        <option value="GET">GET</option>
-                        <option value="POST">POST</option>
-                        <option value="PUT">PUT</option>
-                        <option value="HEAD">HEAD</option>
-                    </select>
+                    <label for="endpoints">Endpoints</label>
+                    <input type="text" id="endpoints" class="form-control"
+                           value="/health" placeholder="/health, /, /api">
+                    <small class="text-muted">Comma-separated paths to ping (e.g. /health, /, /docs)</small>
                 </div>
 
                 <div class="form-group">
                     <label for="interval">Check Interval</label>
                     <select id="interval" class="form-control">
                         <option value="5">Every 5 minutes</option>
+                        <option value="10">Every 10 minutes</option>
+                        <option value="14" selected>Every 14 minutes (recommended)</option>
                         <option value="15">Every 15 minutes</option>
                         <option value="30">Every 30 minutes</option>
                         <option value="60">Every 1 hour</option>
                     </select>
                 </div>
 
-                <div class="form-group">
-                    <label for="expected_status">Expected Status Code</label>
-                    <input type="number" id="expected_status" class="form-control" value="200" required>
-                </div>
-
                 <div class="flex gap-2 mt-3">
+                    <button type="button" id="test-btn" class="btn btn-outline">Test Now</button>
                     <button type="submit" id="save-btn" class="btn btn-primary">Create Service</button>
-                    <button type="button" id="test-btn" class="btn btn-outline">Test Request Now</button>
                 </div>
             </form>
         </div>
@@ -89,19 +80,36 @@
             Auth.requireAuth();
 
             const form = document.getElementById('service-form');
+            const testResults = document.getElementById('test-results');
+            const testContent = document.getElementById('test-content');
 
+            function getPayload() {
+                const baseUrl = document.getElementById('base_url').value.trim();
+                const endpointsRaw = document.getElementById('endpoints').value.trim();
+                const endpoints = endpointsRaw
+                    ? endpointsRaw.split(',').map(e => e.trim()).filter(Boolean)
+                    : ['/health'];
+                const intervalMinutes = parseInt(document.getElementById('interval').value, 10);
+
+                return {
+                    base_url: baseUrl,
+                    endpoints: endpoints,
+                    interval_minutes: intervalMinutes
+                };
+            }
+
+            // ---- Create Service ----
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 App.hideAlert('service-alert');
-                App.setLoading('save-btn', true, 'Create Service');
 
-                const payload = {
-                    name: document.getElementById('name').value,
-                    url: document.getElementById('url').value,
-                    method: document.getElementById('method').value,
-                    interval_minutes: parseInt(document.getElementById('interval').value),
-                    expected_status: parseInt(document.getElementById('expected_status').value)
-                };
+                const payload = getPayload();
+                if (!payload.base_url) {
+                    App.showAlert('service-alert', 'Base URL is required', 'error');
+                    return;
+                }
+
+                App.setLoading('save-btn', true, 'Create Service');
 
                 try {
                     await ApiClient.post('/services', payload);
@@ -113,13 +121,51 @@
                 }
             });
 
+            // ---- Test Before Create ----
             document.getElementById('test-btn').addEventListener('click', async () => {
-                // A bit of a hack: Since the backend test endpoint requires an existing service ID,
-                // we first need to save it, or the backend needs a generic /test endpoint.
-                // According to requirements, /api/services/<id>/test exists.
-                // So we inform the user they must save first, or we create it as inactive.
+                App.hideAlert('service-alert');
 
-                App.showAlert('service-alert', 'You must create the service first before testing it.', 'error');
+                const payload = getPayload();
+                if (!payload.base_url) {
+                    App.showAlert('service-alert', 'Enter a Base URL before testing', 'error');
+                    return;
+                }
+
+                App.setLoading('test-btn', true, 'Test Now');
+                testResults.style.display = 'none';
+
+                try {
+                    const data = await ApiClient.post('/test', {
+                        base_url: payload.base_url,
+                        endpoints: payload.endpoints
+                    });
+
+                    // Render results
+                    let html = '<div class="table-responsive"><table class="table"><thead><tr>'
+                        + '<th>Endpoint</th><th>Status</th><th>Time</th><th>Result</th>'
+                        + '</tr></thead><tbody>';
+
+                    (data.results || []).forEach(r => {
+                        const ok = r.success && r.status_code && r.status_code < 400;
+                        const badge = ok
+                            ? '<span class="badge badge-success">OK</span>'
+                            : '<span class="badge badge-error">FAIL</span>';
+                        html += `<tr>
+                            <td><code>${r.endpoint || '/'}</code><br><small>${r.url || ''}</small></td>
+                            <td>${r.status_code ?? '—'}</td>
+                            <td>${r.response_time_ms} ms</td>
+                            <td>${badge}${r.error ? '<br><small class="text-muted">' + r.error + '</small>' : ''}</td>
+                        </tr>`;
+                    });
+
+                    html += '</tbody></table></div>';
+                    testContent.innerHTML = html;
+                    testResults.style.display = 'block';
+                } catch (error) {
+                    App.showAlert('service-alert', error.message, 'error');
+                } finally {
+                    App.setLoading('test-btn', false, 'Test Now');
+                }
             });
         });
     </script>
