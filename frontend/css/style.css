@@ -30,6 +30,14 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: 14px; /* Slightly smaller base font for mobile to fit more content */
+  }
 }
 
 a {
@@ -55,9 +63,21 @@ h1, h2, h3, h4, h5, h6 {
   padding: 0 1.5rem;
 }
 
+@media (max-width: 480px) {
+  .container {
+    padding: 0 1rem;
+  }
+}
+
 .main-content {
   flex: 1;
   padding: 2rem 0;
+}
+
+@media (max-width: 480px) {
+  .main-content {
+    padding: 1rem 0;
+  }
 }
 
 /* Navbar */
@@ -71,6 +91,7 @@ h1, h2, h3, h4, h5, h6 {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .navbar-brand {
@@ -79,11 +100,47 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--text-main);
 }
 
+.navbar-toggler {
+  display: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem;
+}
+
+.toggler-icon {
+  display: block;
+  width: 25px;
+  height: 3px;
+  background-color: var(--text-main);
+  margin: 5px 0;
+  transition: var(--transition);
+}
+
 .navbar-nav {
   display: flex;
   gap: 1.5rem;
   list-style: none;
   align-items: center;
+}
+
+@media (max-width: 768px) {
+  .navbar-toggler {
+    display: block;
+  }
+
+  .navbar-nav {
+    display: none;
+    flex-direction: column;
+    width: 100%;
+    gap: 1rem;
+    padding-top: 1rem;
+    align-items: flex-start;
+  }
+
+  .navbar-nav.show {
+    display: flex;
+  }
 }
 
 .nav-link {
@@ -105,6 +162,12 @@ h1, h2, h3, h4, h5, h6 {
   box-shadow: 0 4px 6px rgba(0,0,0,0.1);
 }
 
+@media (max-width: 480px) {
+  .card {
+    padding: 1rem;
+  }
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -112,6 +175,14 @@ h1, h2, h3, h4, h5, h6 {
   margin-bottom: 1rem;
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.5rem;
+}
+
+@media (max-width: 480px) {
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
 }
 
 .card-header h2, .card-header h3 {
@@ -133,6 +204,7 @@ h1, h2, h3, h4, h5, h6 {
 .form-control {
   width: 100%;
   padding: 0.75rem 1rem;
+  min-height: 44px;
   background-color: var(--bg-dark);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -161,6 +233,7 @@ select.form-control {
   align-items: center;
   justify-content: center;
   padding: 0.75rem 1.5rem;
+  min-height: 44px;
   border: none;
   border-radius: var(--radius);
   font-family: var(--font-family);
@@ -169,6 +242,12 @@ select.form-control {
   cursor: pointer;
   transition: all var(--transition);
   text-align: center;
+}
+
+@media (max-width: 480px) {
+  .btn {
+    width: 100%;
+  }
 }
 
 .btn:disabled {
@@ -249,6 +328,14 @@ select.form-control {
 .gap-1 { gap: 0.5rem; }
 .gap-2 { gap: 1rem; }
 
+@media (max-width: 480px) {
+  .flex.justify-between {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+}
+
 /* Dashboard Grids */
 .dashboard-grid {
   display: grid;
@@ -256,14 +343,22 @@ select.form-control {
   gap: 1.5rem;
 }
 
+@media (max-width: 480px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Tables */
 .table-responsive {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 600px; /* Ensure table doesn't squish too much, forces horizontal scroll */
 }
 
 th, td {
@@ -328,6 +423,12 @@ tr:last-child td {
 .auth-container {
   max-width: 400px;
   margin: 4rem auto;
+}
+
+@media (max-width: 480px) {
+  .auth-container {
+    margin: 2rem auto;
+  }
 }
 
 /* Tabs */
