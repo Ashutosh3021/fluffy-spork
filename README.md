@@ -52,9 +52,11 @@ A pure-backend service that keeps itself (and other Render free-tier services) a
 
 - **Single Process**: Only one service to deploy.
 - **Pure Backend**: Clean REST API, built with Flask.
-- **User Services**: Configure multiple external URLs with custom endpoints and intervals.
-- **Background Engine**: Periodically pings URLs based on their intervals.
-- **In-Memory Store**: Easy setup, stores history, auth, and configs in memory.
+- **Auth**: Sign up / Login with email + password or PIN. Change profile.
+- **Service Management**: Create, list, update, delete services. Configure base URL, endpoints, and interval (or pings-per-day).
+- **Test Run**: Immediately ping a service and see results.
+- **Background Engine**: Periodically pings configured services + self keep-alive.
+- **History & Analytics**: In-memory ping records with success rate and response-time stats.
 
 ---
 
@@ -76,7 +78,7 @@ fluffy-spork/
 git clone https://github.com/Ashutosh3021/fluffy-spork.git
 cd fluffy-spork
 pip install -r requirements.txt
-cp .env.example .env          # edit SELF_URL and secrets
+cp .env.example .env          # edit SELF_URL
 python app.py
 ```
 
@@ -84,33 +86,39 @@ python app.py
 
 ## API Documentation
 
-- `POST /api/auth/signup` - Register a new user (`email`, `password` or `pin`).
-- `POST /api/auth/login` - Authenticate (`email`, `password`), returns a token.
-- `PUT /api/auth/profile` - Update profile (`email`, `password`).
+### Auth
+- `POST /api/auth/signup` — Register (`email`, `password` or `pin`)
+- `POST /api/auth/login` — Authenticate, returns `token`
+- `PUT /api/auth/profile` — Update email / password / PIN
 
-- `GET /api/services` - List services.
-- `POST /api/services` - Create a service (`base_url`, `endpoints`, `interval_seconds` or `pings_per_day`).
-- `GET /api/services/<id>` - Get service details.
-- `PUT /api/services/<id>` - Update service configuration.
-- `DELETE /api/services/<id>` - Remove a service.
-- `POST /api/services/<id>/test` - Immediately test the service.
+### Services
+- `GET /api/services` — List your services
+- `POST /api/services` — Create service (`base_url`, `endpoints`, `interval_seconds` or `pings_per_day`)
+- `GET /api/services/<id>` — Get service details
+- `PUT /api/services/<id>` — Update service
+- `DELETE /api/services/<id>` — Delete service
+- `POST /api/services/<id>/test` — Immediate test run
 
-- `GET /api/history` - Get recent ping history.
-- `GET /api/services/<id>/analytics` - Get ping analytics for a service.
+### History & Analytics
+- `GET /api/history` — Recent ping history (optional `?service_id=`)
+- `GET /api/services/<id>/analytics` — Success rate & avg response time
 
-*Note: Endpoints (except signup and login) require a `Authorization: Bearer <token>` header.*
+> All endpoints except signup and login require header:  
+> `Authorization: Bearer <token>`
 
 ---
 
-## Deployment to Render
+## Deployment to Render (Free Tier)
 
-1. Connect your repository to Render as a New Web Service.
-2. Select **Python 3** environment.
-3. Build Command: `pip install -r requirements.txt`
-4. Start Command: `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2`
-5. Set the `SELF_URL` environment variable to your render URL (e.g., `https://your-app-name.onrender.com`).
-
-The service will run the Flask app on the main thread and the background keep-alive task on a separate daemon thread.
+1. Create a new **Web Service** and connect this repository.
+2. Settings:
+   - **Runtime**: Python 3
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2`
+3. Environment Variables:
+   - `SELF_URL` = your public Render URL (e.g. `https://your-app.onrender.com/health`)
+   - `REQUEST_TIMEOUT` (optional, default 15)
+4. Deploy. The service will automatically keep itself awake.
 
 ---
 
@@ -119,8 +127,8 @@ The service will run the Flask app on the main thread and the background keep-al
 | Variable          | Required | Description                                      |
 |-------------------|----------|--------------------------------------------------|
 | `SELF_URL`        | Yes      | Public URL of this service (for self keep-alive) |
-| `PORT`            | No       | Render automatically sets PORT                   |
-| `REQUEST_TIMEOUT` | No       | Per-request timeout (default: 15)                |
+| `PORT`            | No       | Injected by Render                               |
+| `REQUEST_TIMEOUT` | No       | Per-request timeout in seconds (default: 15)     |
 
 ---
 
