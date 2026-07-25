@@ -409,6 +409,7 @@ def pinger_loop():
                     url = service.base_url.rstrip("/") + "/" + endpoint.lstrip("/")
                     # Run synchronously for simplicity and backpressure
                     ping_url(url, service_id, endpoint)
+                    time.sleep(9)  # Wake-up delay
                 service.last_pinged_at = time.time()
 
         time.sleep(1)  # Sleep briefly to avoid high CPU usage
