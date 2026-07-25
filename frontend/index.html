@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Fluffy Spork</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container auth-container">
+        <div class="card">
+            <div class="tabs">
+                <div class="tab active" data-tab="login">Login</div>
+                <div class="tab" data-tab="signup">Sign Up</div>
+            </div>
+
+            <div id="login-tab" class="tab-content active">
+                <h2 class="text-center mb-3">Welcome Back</h2>
+                <div id="login-alert" class="alert"></div>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="login-email">Email</label>
+                        <input type="email" id="login-email" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="login-password">Password</label>
+                        <input type="password" id="login-password" class="form-control" required>
+                    </div>
+                    <button type="submit" id="login-btn" class="btn btn-primary" style="width: 100%">Login</button>
+                </form>
+            </div>
+
+            <div id="signup-tab" class="tab-content">
+                <h2 class="text-center mb-3">Create Account</h2>
+                <div id="signup-alert" class="alert"></div>
+                <form id="signup-form">
+                    <div class="form-group">
+                        <label for="signup-email">Email</label>
+                        <input type="email" id="signup-email" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="signup-password">Password</label>
+                        <input type="password" id="signup-password" class="form-control" required minlength="8">
+                    </div>
+                    <div class="form-group">
+                        <label for="signup-pin">4-Digit PIN</label>
+                        <input type="text" id="signup-pin" class="form-control" required pattern="[0-9]{4}" title="Must be exactly 4 digits">
+                    </div>
+                    <button type="submit" id="signup-btn" class="btn btn-primary" style="width: 100%">Sign Up</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            Auth.redirectIfAuthenticated();
+
+            // Tab switching
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    // Remove active from all
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+                    // Add active to clicked
+                    tab.classList.add('active');
+                    document.getElementById(`${tab.dataset.tab}-tab`).classList.add('active');
+
+                    // Hide alerts
+                    App.hideAlert('login-alert');
+                    App.hideAlert('signup-alert');
+                });
+            });
+
+            // Login Form
+            document.getElementById('login-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                App.hideAlert('login-alert');
+                App.setLoading('login-btn', true, 'Login');
+
+                const email = document.getElementById('login-email').value;
+                const password = document.getElementById('login-password').value;
+
+                try {
+                    const data = await ApiClient.post('/auth/login', { email, password });
+                    Auth.login(data.token);
+                    window.location.href = 'dashboard.html';
+                } catch (error) {
+                    App.showAlert('login-alert', error.message, 'error');
+                    App.setLoading('login-btn', false, 'Login');
+                }
+            });
+
+            // Signup Form
+            document.getElementById('signup-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                App.hideAlert('signup-alert');
+                App.setLoading('signup-btn', true, 'Sign Up');
+
+                const email = document.getElementById('signup-email').value;
+                const password = document.getElementById('signup-password').value;
+                const pin = document.getElementById('signup-pin').value;
+
+                try {
+                    await ApiClient.post('/auth/signup', { email, password, pin });
+
+                    // Switch to login tab
+                    document.querySelector('[data-tab="login"]').click();
+                    document.getElementById('login-email').value = email;
+
+                    // Reset signup form
+                    e.target.reset();
+
+                    // Show alert on login tab instead so it doesn't get hidden by tab switch
+                    App.showAlert('login-alert', 'Account created! You can now log in.', 'success');
+                } catch (error) {
+                    App.showAlert('signup-alert', error.message, 'error');
+                } finally {
+                    App.setLoading('signup-btn', false, 'Sign Up');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Service - Fluffy Spork</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="navbar-brand">Fluffy Spork</div>
+            <ul class="navbar-nav">
+                <li><a href="dashboard.html" class="nav-link">Dashboard</a></li>
+                <li><a href="services.html" class="nav-link">Services</a></li>
+                <li><a href="new-service.html" class="nav-link active">New Service</a></li>
+                <li><a href="profile.html" class="nav-link">Profile</a></li>
+                <li><a href="#" id="logout-btn" class="nav-link">Logout</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="main-content container">
+        <h1>Create New Service</h1>
+
+        <div id="service-alert" class="alert"></div>
+
+        <div class="card">
+            <form id="service-form">
+                <div class="form-group">
+                    <label for="name">Service Name</label>
+                    <input type="text" id="name" class="form-control" required placeholder="My Web App">
+                </div>
+
+                <div class="form-group">
+                    <label for="url">Target URL</label>
+                    <input type="url" id="url" class="form-control" required placeholder="https://example.com/api/ping">
+                </div>
+
+                <div class="form-group">
+                    <label for="method">HTTP Method</label>
+                    <select id="method" class="form-control">
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                        <option value="HEAD">HEAD</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="interval">Check Interval</label>
+                    <select id="interval" class="form-control">
+                        <option value="5">Every 5 minutes</option>
+                        <option value="15">Every 15 minutes</option>
+                        <option value="30">Every 30 minutes</option>
+                        <option value="60">Every 1 hour</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="expected_status">Expected Status Code</label>
+                    <input type="number" id="expected_status" class="form-control" value="200" required>
+                </div>
+
+                <div class="flex gap-2 mt-3">
+                    <button type="submit" id="save-btn" class="btn btn-primary">Create Service</button>
+                    <button type="button" id="test-btn" class="btn btn-outline">Test Request Now</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Test Results Area -->
+        <div id="test-results" class="card mt-3" style="display: none;">
+            <h3>Test Results</h3>
+            <div id="test-content" class="mt-2"></div>
+        </div>
+    </main>
+
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            Auth.requireAuth();
+
+            const form = document.getElementById('service-form');
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                App.hideAlert('service-alert');
+                App.setLoading('save-btn', true, 'Create Service');
+
+                const payload = {
+                    name: document.getElementById('name').value,
+                    url: document.getElementById('url').value,
+                    method: document.getElementById('method').value,
+                    interval_minutes: parseInt(document.getElementById('interval').value),
+                    expected_status: parseInt(document.getElementById('expected_status').value)
+                };
+
+                try {
+                    await ApiClient.post('/services', payload);
+                    window.location.href = 'services.html';
+                } catch (error) {
+                    App.showAlert('service-alert', error.message, 'error');
+                } finally {
+                    App.setLoading('save-btn', false, 'Create Service');
+                }
+            });
+
+            document.getElementById('test-btn').addEventListener('click', async () => {
+                // A bit of a hack: Since the backend test endpoint requires an existing service ID,
+                // we first need to save it, or the backend needs a generic /test endpoint.
+                // According to requirements, /api/services/<id>/test exists.
+                // So we inform the user they must save first, or we create it as inactive.
+
+                App.showAlert('service-alert', 'You must create the service first before testing it.', 'error');
+            });
+        });
+    </script>
+</body>
+</html>

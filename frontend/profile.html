@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile - Fluffy Spork</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <div class="navbar-brand">Fluffy Spork</div>
+            <ul class="navbar-nav">
+                <li><a href="dashboard.html" class="nav-link">Dashboard</a></li>
+                <li><a href="services.html" class="nav-link">Services</a></li>
+                <li><a href="new-service.html" class="nav-link">New Service</a></li>
+                <li><a href="profile.html" class="nav-link active">Profile</a></li>
+                <li><a href="#" id="logout-btn" class="nav-link">Logout</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="main-content container">
+        <h1>Profile Settings</h1>
+
+        <div id="profile-alert" class="alert"></div>
+
+        <div class="card" style="max-width: 500px;">
+            <form id="profile-form">
+                <!-- Backend PUT /api/auth/profile needs email, pin, maybe password -->
+
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" class="form-control" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="pin">4-Digit PIN</label>
+                    <input type="text" id="pin" class="form-control" required pattern="[0-9]{4}">
+                    <small class="text-muted">Required for sensitive actions.</small>
+                </div>
+
+                <hr style="border-color: var(--border); margin: 1.5rem 0;">
+
+                <h3>Change Password</h3>
+                <small class="text-muted mb-2" style="display:block;">Leave blank if you don't want to change it.</small>
+
+                <div class="form-group">
+                    <label for="new_password">New Password</label>
+                    <input type="password" id="new_password" class="form-control" minlength="8">
+                </div>
+
+                <button type="submit" id="save-btn" class="btn btn-primary">Save Changes</button>
+            </form>
+        </div>
+    </main>
+
+    <script src="js/auth.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            Auth.requireAuth();
+
+            // Fetch profile info to populate form
+            try {
+                // Assuming there's a GET /api/auth/profile or we can just update.
+                // The requirements say PUT /api/auth/profile but don't explicitly list GET /api/auth/profile.
+                // If there isn't a GET, we will leave the email blank for them to type.
+                // Let's assume there's a GET or we decode the token if it's JWT.
+                // Since this is a REST API with bearer token, if GET /api/auth/profile fails, we just leave it empty.
+                const profile = await ApiClient.get('/auth/profile');
+                if (profile && profile.email) {
+                    document.getElementById('email').value = profile.email;
+                }
+            } catch (e) {
+                console.warn('Could not fetch profile info automatically.');
+            }
+
+            const form = document.getElementById('profile-form');
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                App.hideAlert('profile-alert');
+                App.setLoading('save-btn', true, 'Save Changes');
+
+                const payload = {
+                    email: document.getElementById('email').value,
+                    pin: document.getElementById('pin').value
+                };
+
+                const newPassword = document.getElementById('new_password').value;
+                if (newPassword) {
+                    payload.password = newPassword;
+                }
+
+                try {
+                    await ApiClient.put('/auth/profile', payload);
+                    App.showAlert('profile-alert', 'Profile updated successfully!', 'success');
+                    document.getElementById('new_password').value = ''; // clear password field
+                } catch (error) {
+                    App.showAlert('profile-alert', error.message, 'error');
+                } finally {
+                    App.setLoading('save-btn', false, 'Save Changes');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
