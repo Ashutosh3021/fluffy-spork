@@ -39,6 +39,8 @@ CORS(app, resources={
     }
 })
 
+ALLOWED_METHODS = {"GET", "HEAD", "POST", "PUT"}
+
 # ---------------------------------------------------------------------------
 # Data Models (In-Memory)
 # ---------------------------------------------------------------------------
@@ -55,6 +57,7 @@ class Service:
     base_url: str
     endpoints: List[str]
     interval_seconds: int
+    method: str = "GET"
     last_pinged_at: float = 0.0
 
 @dataclass
@@ -71,11 +74,11 @@ class PingRecord:
 # ---------------------------------------------------------------------------
 # In-Memory Storage
 # ---------------------------------------------------------------------------
-db_users: Dict[str, User] = {}          # user_id -> User
-db_users_by_email: Dict[str, User] = {} # email -> User
-db_tokens: Dict[str, str] = {}          # token -> user_id
-db_services: Dict[str, Service] = {}    # service_id -> Service
-db_ping_records: List[PingRecord] = []  # append-only list
+db_users: Dict[str, User] = {}
+db_users_by_email: Dict[str, User] = {}
+db_tokens: Dict[str, str] = {}
+db_services: Dict[str, Service] = {}
+db_ping_records: List[PingRecord] = []
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -94,7 +97,7 @@ def status():
     uptime_seconds = time.time() - start_time
     return jsonify({
         "status": "ok",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "uptime_seconds": int(uptime_seconds),
         "users_count": len(db_users),
         "services_count": len(db_services),
@@ -188,14 +191,22 @@ def update_profile():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _do_ping(url: str) -> dict:
-    """Ping a single URL and return result dict."""
+def _normalize_method(method: Optional[str]) -> str:
+    m = (method or "GET").upper().strip()
+    if m not in ALLOWED_METHODS:
+        return "GET"
+    return m
+
+def _do_ping(url: str, method: str = "GET") -> dict:
+    """Ping a single URL with the given HTTP method."""
+    method = _normalize_method(method)
     start = time.time()
     try:
-        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+        resp = requests.request(method, url, timeout=REQUEST_TIMEOUT)
         elapsed_ms = int((time.time() - start) * 1000)
         return {
             "url": url,
+            "method": method,
             "success": True,
             "status_code": resp.status_code,
             "response_time_ms": elapsed_ms,
@@ -205,6 +216,7 @@ def _do_ping(url: str) -> dict:
         elapsed_ms = int((time.time() - start) * 1000)
         return {
             "url": url,
+            "method": method,
             "success": False,
             "status_code": None,
             "response_time_ms": elapsed_ms,
@@ -223,21 +235,20 @@ def test_url():
 
     base_url = data.get("base_url") or data.get("url")
     endpoints = data.get("endpoints")
+    method = _normalize_method(data.get("method"))
 
     if not base_url:
         return jsonify({"error": "base_url (or url) is required"}), 400
 
-    # If endpoints provided, ping base_url + each endpoint
-    # If no endpoints, treat base_url as a full URL and ping it directly
     results = []
     if endpoints and isinstance(endpoints, list) and len(endpoints) > 0:
         for endpoint in endpoints:
             full = base_url.rstrip("/") + "/" + str(endpoint).lstrip("/")
-            result = _do_ping(full)
+            result = _do_ping(full, method)
             result["endpoint"] = endpoint
             results.append(result)
     else:
-        result = _do_ping(base_url)
+        result = _do_ping(base_url, method)
         result["endpoint"] = "/"
         results.append(result)
 
@@ -260,9 +271,9 @@ def create_service():
     user = get_current_user()
     data = request.json or {}
 
-    # Accept both base_url and url for convenience
     base_url = data.get("base_url") or data.get("url")
     endpoints = data.get("endpoints", ["/health"])
+    method = _normalize_method(data.get("method"))
 
     if not base_url:
         return jsonify({"error": "base_url is required"}), 400
@@ -276,9 +287,12 @@ def create_service():
     elif interval_minutes:
         interval = int(interval_minutes) * 60
     elif pings_per_day:
-        interval = int(86400 / int(pings_per_day))
+        interval = int(86400 / max(1, int(pings_per_day)))
     else:
-        interval = 840  # default 14 minutes
+        interval = 840
+
+    if interval < 60:
+        return jsonify({"error": "Interval must be at least 60 seconds"}), 400
 
     service_id = str(uuid.uuid4())
     service = Service(
@@ -286,7 +300,8 @@ def create_service():
         user_id=user.id,
         base_url=base_url,
         endpoints=endpoints if isinstance(endpoints, list) else ["/health"],
-        interval_seconds=interval
+        interval_seconds=interval,
+        method=method
     )
     db_services[service_id] = service
     return jsonify(service.__dict__), 201
@@ -313,12 +328,14 @@ def update_service(service_id):
         service.base_url = data.get("base_url") or data.get("url")
     if "endpoints" in data:
         service.endpoints = data["endpoints"]
+    if "method" in data:
+        service.method = _normalize_method(data["method"])
     if "interval_seconds" in data:
         service.interval_seconds = int(data["interval_seconds"])
     elif "interval_minutes" in data:
         service.interval_seconds = int(data["interval_minutes"]) * 60
     elif "pings_per_day" in data:
-        service.interval_seconds = int(86400 / int(data["pings_per_day"]))
+        service.interval_seconds = int(86400 / max(1, int(data["pings_per_day"])))
 
     return jsonify(service.__dict__), 200
 
@@ -344,7 +361,7 @@ def test_service(service_id):
     results = []
     for endpoint in service.endpoints:
         url = service.base_url.rstrip("/") + "/" + endpoint.lstrip("/")
-        result = _do_ping(url)
+        result = _do_ping(url, service.method)
         result["endpoint"] = endpoint
         results.append(result)
 
@@ -410,8 +427,8 @@ def get_analytics(service_id):
 # ---------------------------------------------------------------------------
 # Background Execution Engine
 # ---------------------------------------------------------------------------
-def ping_url(url: str, service_id: str, endpoint: str):
-    result = _do_ping(url)
+def ping_url(url: str, service_id: str, endpoint: str, method: str = "GET"):
+    result = _do_ping(url, method)
     record = PingRecord(
         id=str(uuid.uuid4()),
         service_id=service_id,
@@ -423,9 +440,9 @@ def ping_url(url: str, service_id: str, endpoint: str):
         error=result["error"]
     )
     if result["success"]:
-        logger.info(f"✅  PING OK   | {url} | HTTP {result['status_code']} | {result['response_time_ms']}ms")
+        logger.info(f"✅  PING OK   | {method} {url} | HTTP {result['status_code']} | {result['response_time_ms']}ms")
     else:
-        logger.error(f"❌  ERROR     | {url} | {result['error']}")
+        logger.error(f"❌  ERROR     | {method} {url} | {result['error']}")
 
     db_ping_records.append(record)
     if len(db_ping_records) > 10000:
@@ -434,12 +451,11 @@ def ping_url(url: str, service_id: str, endpoint: str):
 def pinger_loop():
     logger.info("🚀  Background execution engine started.")
     last_self_ping = 0.0
-    self_ping_interval = 840  # 14 minutes
+    self_ping_interval = 840
 
     while True:
         now = time.time()
 
-        # Self keep-alive
         if SELF_URL and (now - last_self_ping) >= self_ping_interval:
             logger.info(f"🔄  Self keep-alive ping to {SELF_URL}")
             try:
@@ -449,19 +465,17 @@ def pinger_loop():
                 logger.error(f"❌  SELF PING ERROR | {e}")
             last_self_ping = time.time()
 
-        # User services keep-alive
         for service_id, service in list(db_services.items()):
             if (now - service.last_pinged_at) >= service.interval_seconds:
-                logger.info(f"🔄  Pinging service {service_id} ({service.base_url})")
+                logger.info(f"🔄  Pinging service {service_id} ({service.method} {service.base_url})")
                 for endpoint in service.endpoints:
                     url = service.base_url.rstrip("/") + "/" + endpoint.lstrip("/")
-                    ping_url(url, service_id, endpoint)
-                    time.sleep(9)  # Wake-up delay
+                    ping_url(url, service_id, endpoint, service.method)
+                    time.sleep(9)
                 service.last_pinged_at = time.time()
 
         time.sleep(1)
 
-# Start the background thread
 pinger_thread = threading.Thread(target=pinger_loop, daemon=True, name="pinger")
 pinger_thread.start()
 
