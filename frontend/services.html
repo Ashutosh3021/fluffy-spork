@@ -39,6 +39,7 @@
                     <thead>
                         <tr>
                             <th>URL / Endpoints</th>
+                            <th>Method</th>
                             <th>Interval</th>
                             <th>Last Ping</th>
                             <th>Actions</th>
@@ -46,7 +47,7 @@
                     </thead>
                     <tbody id="services-table-body">
                         <tr>
-                            <td colspan="4" class="text-center">Loading services...</td>
+                            <td colspan="5" class="text-center">Loading services...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -87,18 +88,20 @@
                     const services = await ApiClient.get('/services');
 
                     if (!services || services.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No services found. Create one!</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No services found. Create one!</td></tr>';
                         return;
                     }
 
                     tbody.innerHTML = services.map(s => {
                         const endpoints = (s.endpoints || []).join(', ') || '/';
+                        const method = s.method || 'GET';
                         return `
                         <tr>
                             <td>
                                 <strong>${App.escapeHtml(s.base_url || '—')}</strong><br>
                                 <small class="text-muted">${App.escapeHtml(endpoints)}</small>
                             </td>
+                            <td><span class="badge badge-muted">${App.escapeHtml(method)}</span></td>
                             <td>${formatInterval(s.interval_seconds)}</td>
                             <td>${formatLastPing(s.last_pinged_at)}</td>
                             <td>
@@ -113,7 +116,7 @@
                     attachEventListeners();
                 } catch (error) {
                     App.showAlert('services-alert', 'Failed to load services: ' + error.message, 'error');
-                    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Failed to load</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Failed to load</td></tr>';
                 }
             };
 
@@ -149,7 +152,8 @@
                                 const lines = results.map(r => {
                                     const ok = r.success && r.status_code && r.status_code < 400;
                                     const label = ok ? 'OK' : 'FAIL';
-                                    return `${r.endpoint || '/'}: ${label} (HTTP ${r.status_code ?? '—'}, ${r.response_time_ms}ms)${r.error ? ' — ' + r.error : ''}`;
+                                    const method = r.method || 'GET';
+                                    return `${method} ${r.endpoint || '/'}: ${label} (HTTP ${r.status_code ?? '—'}, ${r.response_time_ms}ms)${r.error ? ' — ' + r.error : ''}`;
                                 });
                                 const allOk = results.every(r => r.success && r.status_code && r.status_code < 400);
                                 App.showAlert(
