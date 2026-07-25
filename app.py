@@ -4,13 +4,14 @@ import time
 import logging
 import threading
 from datetime import datetime, timezone
-from dataclasses import dataclass
-from typing import List, Optional, Dict
+from typing import List, Optional
 
 import re
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
+import store
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -26,13 +27,13 @@ logger = logging.getLogger(__name__)
 # Flask app
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
-app.config['JSON_SORT_KEYS'] = False
+app.config["JSON_SORT_KEYS"] = False
 
 CORS(app, resources={
     r"/*": {
         "origins": [
             "https://keep-awake1.vercel.app",
-            re.compile(r"http://localhost:.*")
+            re.compile(r"http://localhost:.*"),
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
@@ -42,45 +43,6 @@ CORS(app, resources={
 ALLOWED_METHODS = {"GET", "HEAD", "POST", "PUT"}
 
 # ---------------------------------------------------------------------------
-# Data Models (In-Memory)
-# ---------------------------------------------------------------------------
-@dataclass
-class User:
-    id: str
-    email: str
-    password: str
-
-@dataclass
-class Service:
-    id: str
-    user_id: str
-    base_url: str
-    endpoints: List[str]
-    interval_seconds: int
-    method: str = "GET"
-    last_pinged_at: float = 0.0
-
-@dataclass
-class PingRecord:
-    id: str
-    service_id: str
-    timestamp: str
-    endpoint: str
-    status_code: Optional[int]
-    success: bool
-    response_time_ms: int
-    error: Optional[str]
-
-# ---------------------------------------------------------------------------
-# In-Memory Storage
-# ---------------------------------------------------------------------------
-db_users: Dict[str, User] = {}
-db_users_by_email: Dict[str, User] = {}
-db_tokens: Dict[str, str] = {}
-db_services: Dict[str, Service] = {}
-db_ping_records: List[PingRecord] = []
-
-# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 PORT = int(os.environ.get("PORT", "8080"))
@@ -88,19 +50,32 @@ SELF_URL = os.environ.get("SELF_URL", "")
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "15"))
 start_time = time.time()
 
+# Ensure Pyronites tables exist (admin SQL when key allows; otherwise create in dashboard)
+try:
+    store.bootstrap_schema()
+    logger.info("Pyronites schema bootstrap attempted.")
+except Exception as e:
+    logger.warning("Pyronites schema bootstrap skipped/failed: %s", e)
+
+
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}), 200
+    return jsonify({
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }), 200
+
 
 @app.route("/api/status")
 def status():
     uptime_seconds = time.time() - start_time
     return jsonify({
         "status": "ok",
-        "version": "1.2.0",
+        "version": "1.3.0",
         "uptime_seconds": int(uptime_seconds),
-        "users_count": len(db_users),
-        "services_count": len(db_services),
+        "users_count": store.users_count(),
+        "services_count": store.services_count(),
+        "storage": "pyronites",
     }), 200
 
 
@@ -112,20 +87,24 @@ def get_current_user():
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
     token = auth_header.split(" ")[1]
-    user_id = db_tokens.get(token)
-    if user_id:
-        return db_users.get(user_id)
-    return None
+    user_id = store.token_user_id(token)
+    if not user_id:
+        return None
+    return store.user_by_id(user_id)
+
 
 def require_auth(f):
     from functools import wraps
+
     @wraps(f)
     def decorated(*args, **kwargs):
         user = get_current_user()
         if not user:
             return jsonify({"error": "Unauthorized"}), 401
         return f(*args, **kwargs)
+
     return decorated
+
 
 # ---------------------------------------------------------------------------
 # Auth Endpoints
@@ -138,15 +117,13 @@ def signup():
 
     if not email or not password:
         return jsonify({"error": "Email and password/pin are required"}), 400
-    if email in db_users_by_email:
+    if store.user_by_email(email):
         return jsonify({"error": "Email already exists"}), 409
 
     user_id = str(uuid.uuid4())
-    user = User(id=user_id, email=email, password=password)
-    db_users[user_id] = user
-    db_users_by_email[email] = user
-
+    store.user_create(user_id, email, password)
     return jsonify({"message": "User created", "user_id": user_id}), 201
+
 
 @app.route("/api/auth/login", methods=["POST"])
 def login():
@@ -157,14 +134,14 @@ def login():
     if not email or not password:
         return jsonify({"error": "Email and password/pin are required"}), 400
 
-    user = db_users_by_email.get(email)
-    if not user or user.password != password:
+    user = store.user_by_email(email)
+    if not user or user.get("password") != password:
         return jsonify({"error": "Invalid credentials"}), 401
 
     token = str(uuid.uuid4())
-    db_tokens[token] = user.id
-
+    store.token_save(token, user["id"])
     return jsonify({"token": token}), 200
+
 
 @app.route("/api/auth/profile", methods=["PUT"])
 @require_auth
@@ -174,16 +151,20 @@ def update_profile():
 
     new_email = data.get("email")
     new_password = data.get("password") or data.get("pin")
+    fields = {}
 
     if new_email:
-        if new_email != user.email and new_email in db_users_by_email:
-            return jsonify({"error": "Email already exists"}), 409
-        del db_users_by_email[user.email]
-        user.email = new_email
-        db_users_by_email[new_email] = user
+        if new_email != user["email"]:
+            existing = store.user_by_email(new_email)
+            if existing:
+                return jsonify({"error": "Email already exists"}), 409
+        fields["email"] = new_email
 
     if new_password:
-        user.password = new_password
+        fields["password"] = new_password
+
+    if fields:
+        store.user_update(user["id"], **fields)
 
     return jsonify({"message": "Profile updated"}), 200
 
@@ -197,12 +178,8 @@ def _normalize_method(method: Optional[str]) -> str:
         return "GET"
     return m
 
-def _parse_interval(data: dict) -> tuple:
-    """
-    Parse interval from request body.
-    Returns (interval_seconds, error_message).
-    error_message is None on success.
-    """
+
+def _parse_interval(data: dict):
     interval_seconds = data.get("interval_seconds")
     interval_minutes = data.get("interval_minutes")
     pings_per_day = data.get("pings_per_day")
@@ -226,12 +203,13 @@ def _parse_interval(data: dict) -> tuple:
             return None, "pings_per_day must be between 1 and 1440"
         interval = int(86400 / ppd)
     else:
-        interval = 840  # default 14 minutes
+        interval = 840
 
     if interval < 60:
         return None, "Interval must be at least 60 seconds (1 minute)"
 
     return interval, None
+
 
 def _do_ping(url: str, method: str = "GET") -> dict:
     method = _normalize_method(method)
@@ -245,7 +223,7 @@ def _do_ping(url: str, method: str = "GET") -> dict:
             "success": True,
             "status_code": resp.status_code,
             "response_time_ms": elapsed_ms,
-            "error": None
+            "error": None,
         }
     except Exception as e:
         elapsed_ms = int((time.time() - start) * 1000)
@@ -255,7 +233,7 @@ def _do_ping(url: str, method: str = "GET") -> dict:
             "success": False,
             "status_code": None,
             "response_time_ms": elapsed_ms,
-            "error": str(e)
+            "error": str(e),
         }
 
 
@@ -290,14 +268,14 @@ def test_url():
 
 
 # ---------------------------------------------------------------------------
-# Service Management Endpoints
+# Service Management
 # ---------------------------------------------------------------------------
 @app.route("/api/services", methods=["GET"])
 @require_auth
 def list_services():
     user = get_current_user()
-    user_services = [s for s in db_services.values() if s.user_id == user.id]
-    return jsonify([s.__dict__ for s in user_services]), 200
+    return jsonify(store.services_for_user(user["id"])), 200
+
 
 @app.route("/api/services", methods=["POST"])
 @require_auth
@@ -317,73 +295,80 @@ def create_service():
         return jsonify({"error": err}), 400
 
     service_id = str(uuid.uuid4())
-    service = Service(
-        id=service_id,
-        user_id=user.id,
-        base_url=base_url,
-        endpoints=endpoints if isinstance(endpoints, list) else ["/health"],
-        interval_seconds=interval,
-        method=method
-    )
-    db_services[service_id] = service
-    return jsonify(service.__dict__), 201
+    svc = store.service_create({
+        "id": service_id,
+        "user_id": user["id"],
+        "base_url": base_url,
+        "endpoints": endpoints if isinstance(endpoints, list) else ["/health"],
+        "interval_seconds": interval,
+        "method": method,
+        "last_pinged_at": 0.0,
+    })
+    return jsonify(svc), 201
+
 
 @app.route("/api/services/<service_id>", methods=["GET"])
 @require_auth
 def get_service(service_id):
     user = get_current_user()
-    service = db_services.get(service_id)
-    if not service or service.user_id != user.id:
+    service = store.service_get(service_id)
+    if not service or service["user_id"] != user["id"]:
         return jsonify({"error": "Service not found"}), 404
-    return jsonify(service.__dict__), 200
+    return jsonify(service), 200
+
 
 @app.route("/api/services/<service_id>", methods=["PUT"])
 @require_auth
 def update_service(service_id):
     user = get_current_user()
-    service = db_services.get(service_id)
-    if not service or service.user_id != user.id:
+    service = store.service_get(service_id)
+    if not service or service["user_id"] != user["id"]:
         return jsonify({"error": "Service not found"}), 404
 
     data = request.json or {}
+    fields = {}
     if "base_url" in data or "url" in data:
-        service.base_url = data.get("base_url") or data.get("url")
+        fields["base_url"] = data.get("base_url") or data.get("url")
     if "endpoints" in data:
-        service.endpoints = data["endpoints"]
+        fields["endpoints"] = data["endpoints"]
     if "method" in data:
-        service.method = _normalize_method(data["method"])
+        fields["method"] = _normalize_method(data["method"])
 
     if any(k in data for k in ("interval_seconds", "interval_minutes", "pings_per_day")):
         interval, err = _parse_interval(data)
         if err:
             return jsonify({"error": err}), 400
-        service.interval_seconds = interval
+        fields["interval_seconds"] = interval
 
-    return jsonify(service.__dict__), 200
+    if fields:
+        service = store.service_update(service_id, **fields)
+    return jsonify(service), 200
+
 
 @app.route("/api/services/<service_id>", methods=["DELETE"])
 @require_auth
 def delete_service(service_id):
     user = get_current_user()
-    service = db_services.get(service_id)
-    if not service or service.user_id != user.id:
+    service = store.service_get(service_id)
+    if not service or service["user_id"] != user["id"]:
         return jsonify({"error": "Service not found"}), 404
 
-    del db_services[service_id]
+    store.service_delete(service_id)
     return jsonify({"message": "Service deleted"}), 200
+
 
 @app.route("/api/services/<service_id>/test", methods=["POST"])
 @require_auth
 def test_service(service_id):
     user = get_current_user()
-    service = db_services.get(service_id)
-    if not service or service.user_id != user.id:
+    service = store.service_get(service_id)
+    if not service or service["user_id"] != user["id"]:
         return jsonify({"error": "Service not found"}), 404
 
     results = []
-    for endpoint in service.endpoints:
-        url = service.base_url.rstrip("/") + "/" + endpoint.lstrip("/")
-        result = _do_ping(url, service.method)
+    for endpoint in service["endpoints"]:
+        url = service["base_url"].rstrip("/") + "/" + endpoint.lstrip("/")
+        result = _do_ping(url, service["method"])
         result["endpoint"] = endpoint
         results.append(result)
 
@@ -391,7 +376,7 @@ def test_service(service_id):
 
 
 # ---------------------------------------------------------------------------
-# History & Records Endpoints
+# History & Analytics (Recent History: Time / Service / Status / Duration)
 # ---------------------------------------------------------------------------
 @app.route("/api/history", methods=["GET"])
 @require_auth
@@ -399,76 +384,79 @@ def get_history():
     user = get_current_user()
     service_id = request.args.get("service_id")
 
-    user_service_ids = {s.id for s in db_services.values() if s.user_id == user.id}
+    if service_id:
+        service = store.service_get(service_id)
+        if not service or service["user_id"] != user["id"]:
+            return jsonify({"error": "Service not found or unauthorized"}), 404
 
-    if service_id and service_id not in user_service_ids:
-        return jsonify({"error": "Service not found or unauthorized"}), 404
-
-    records = []
-    for r in reversed(db_ping_records):
-        if r.service_id in user_service_ids:
-            if not service_id or r.service_id == service_id:
-                records.append(r.__dict__)
-        if len(records) >= 100:
-            break
-
+    records = store.pings_for_user(user["id"], service_id=service_id, limit=100)
     return jsonify(records), 200
+
 
 @app.route("/api/services/<service_id>/analytics", methods=["GET"])
 @require_auth
 def get_analytics(service_id):
     user = get_current_user()
-    service = db_services.get(service_id)
-    if not service or service.user_id != user.id:
+    service = store.service_get(service_id)
+    if not service or service["user_id"] != user["id"]:
         return jsonify({"error": "Service not found"}), 404
 
-    service_records = [r for r in db_ping_records if r.service_id == service_id]
+    service_records = store.pings_for_service(service_id)
 
     if not service_records:
         return jsonify({
             "total_pings": 0,
             "success_rate": 0,
-            "avg_response_time_ms": 0
+            "avg_response_time_ms": 0,
         }), 200
 
-    successful_pings = [r for r in service_records if r.success and r.status_code and r.status_code < 400]
-
+    successful = [
+        r for r in service_records
+        if r["success"] and r["status_code"] is not None and r["status_code"] < 400
+    ]
     total = len(service_records)
-    successes = len(successful_pings)
-    success_rate = (successes / total) * 100 if total > 0 else 0
-
-    total_time = sum(r.response_time_ms for r in successful_pings)
-    avg_time = (total_time / successes) if successes > 0 else 0
+    successes = len(successful)
+    success_rate = (successes / total) * 100 if total else 0
+    avg_time = (
+        sum(r["response_time_ms"] for r in successful) / successes if successes else 0
+    )
 
     return jsonify({
         "total_pings": total,
         "success_rate": round(success_rate, 2),
-        "avg_response_time_ms": round(avg_time, 2)
+        "avg_response_time_ms": round(avg_time, 2),
     }), 200
+
 
 # ---------------------------------------------------------------------------
 # Background Execution Engine
 # ---------------------------------------------------------------------------
-def ping_url(url: str, service_id: str, endpoint: str, method: str = "GET"):
+def ping_url(url: str, service_id: str, user_id: str, endpoint: str, method: str = "GET"):
     result = _do_ping(url, method)
-    record = PingRecord(
-        id=str(uuid.uuid4()),
-        service_id=service_id,
-        timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        endpoint=endpoint,
-        status_code=result["status_code"],
-        success=result["success"],
-        response_time_ms=result["response_time_ms"],
-        error=result["error"]
-    )
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "service_id": service_id,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "endpoint": endpoint,
+        "status_code": result["status_code"],
+        "success": result["success"],
+        "response_time_ms": result["response_time_ms"],
+        "error": result["error"],
+    }
     if result["success"]:
-        logger.info(f"✅  PING OK   | {method} {url} | HTTP {result['status_code']} | {result['response_time_ms']}ms")
+        logger.info(
+            "✅  PING OK   | %s %s | HTTP %s | %sms",
+            method, url, result["status_code"], result["response_time_ms"],
+        )
     else:
-        logger.error(f"❌  ERROR     | {method} {url} | {result['error']}")
+        logger.error("❌  ERROR     | %s %s | %s", method, url, result["error"])
 
-    db_ping_records.append(record)
-    if len(db_ping_records) > 10000:
-        db_ping_records.pop(0)
+    try:
+        store.ping_append(record)
+    except Exception as e:
+        logger.error("Failed to persist ping record: %s", e)
+
 
 def pinger_loop():
     logger.info("🚀  Background execution engine started.")
@@ -479,24 +467,43 @@ def pinger_loop():
         now = time.time()
 
         if SELF_URL and (now - last_self_ping) >= self_ping_interval:
-            logger.info(f"🔄  Self keep-alive ping to {SELF_URL}")
+            logger.info("🔄  Self keep-alive ping to %s", SELF_URL)
             try:
                 requests.get(SELF_URL, timeout=REQUEST_TIMEOUT)
-                logger.info(f"✅  SELF PING OK")
+                logger.info("✅  SELF PING OK")
             except Exception as e:
-                logger.error(f"❌  SELF PING ERROR | {e}")
+                logger.error("❌  SELF PING ERROR | %s", e)
             last_self_ping = time.time()
 
-        for service_id, service in list(db_services.items()):
-            if (now - service.last_pinged_at) >= service.interval_seconds:
-                logger.info(f"🔄  Pinging service {service_id} ({service.method} {service.base_url})")
-                for endpoint in service.endpoints:
-                    url = service.base_url.rstrip("/") + "/" + endpoint.lstrip("/")
-                    ping_url(url, service_id, endpoint, service.method)
+        try:
+            services = store.services_all()
+        except Exception as e:
+            logger.error("Failed to load services: %s", e)
+            services = []
+
+        for service in services:
+            if (now - service["last_pinged_at"]) >= service["interval_seconds"]:
+                logger.info(
+                    "🔄  Pinging service %s (%s %s)",
+                    service["id"], service["method"], service["base_url"],
+                )
+                for endpoint in service["endpoints"]:
+                    url = service["base_url"].rstrip("/") + "/" + str(endpoint).lstrip("/")
+                    ping_url(
+                        url,
+                        service["id"],
+                        service["user_id"],
+                        endpoint,
+                        service["method"],
+                    )
                     time.sleep(9)
-                service.last_pinged_at = time.time()
+                try:
+                    store.service_update(service["id"], last_pinged_at=time.time())
+                except Exception as e:
+                    logger.error("Failed to update last_pinged_at: %s", e)
 
         time.sleep(1)
+
 
 pinger_thread = threading.Thread(target=pinger_loop, daemon=True, name="pinger")
 pinger_thread.start()
