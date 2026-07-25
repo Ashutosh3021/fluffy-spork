@@ -1,17 +1,17 @@
 :root {
-  --bg-dark: #121212;
-  --bg-card: #1e1e1e;
-  --bg-hover: #2c2c2c;
+  --bg-dark: #000000;
+  --bg-card: #111111;
+  --bg-hover: #222222;
   --text-main: #ffffff;
-  --text-muted: #a0a0a0;
-  --primary: #bb86fc;
-  --primary-hover: #9c47ff;
+  --text-muted: #cccccc;
+  --primary: #C6E115;
+  --primary-hover: #b3cc13;
   --danger: #cf6679;
   --danger-hover: #ff4d6d;
-  --success: #03dac6;
-  --success-hover: #00b3a1;
+  --success: #C6E115;
+  --success-hover: #b3cc13;
   --border: #333333;
-  --radius: 8px;
+  --radius: 0px;
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --transition: 0.2s ease-in-out;
 }
@@ -178,7 +178,7 @@ select.form-control {
 
 .btn-primary {
   background-color: var(--primary);
-  color: var(--bg-dark);
+  color: #000000;
 }
 
 .btn-primary:hover:not(:disabled) {

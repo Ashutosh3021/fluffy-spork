@@ -48,12 +48,6 @@ class App {
             });
         }
     }
-}
-
-// Initialize shared components when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    App.setupNavigation();
-});
 
     static escapeHtml(unsafe) {
         if (!unsafe) return '';
@@ -64,3 +58,9 @@ document.addEventListener('DOMContentLoaded', () => {
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;");
     }
+}
+
+// Initialize shared components when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    App.setupNavigation();
+});
