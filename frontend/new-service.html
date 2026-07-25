@@ -57,9 +57,26 @@
                     <small class="text-muted">GET is best for most keep-alive use cases</small>
                 </div>
 
+                <!-- Interval mode selector -->
                 <div class="form-group">
-                    <label for="interval">Check Interval</label>
-                    <select id="interval" class="form-control">
+                    <label>Interval Mode</label>
+                    <div class="flex gap-2" style="flex-wrap: wrap;">
+                        <label class="radio-label">
+                            <input type="radio" name="interval_mode" value="preset" checked> Preset
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="interval_mode" value="custom"> Custom
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="interval_mode" value="pings_per_day"> Pings per day
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Preset mode -->
+                <div class="form-group" id="mode-preset">
+                    <label for="interval_preset">Check Interval</label>
+                    <select id="interval_preset" class="form-control">
                         <option value="5">Every 5 minutes</option>
                         <option value="10">Every 10 minutes</option>
                         <option value="14" selected>Every 14 minutes (recommended)</option>
@@ -67,6 +84,27 @@
                         <option value="30">Every 30 minutes</option>
                         <option value="60">Every 1 hour</option>
                     </select>
+                </div>
+
+                <!-- Custom mode -->
+                <div class="form-group" id="mode-custom" style="display: none;">
+                    <label>Custom Interval</label>
+                    <div class="flex gap-2" style="align-items: center; flex-wrap: wrap;">
+                        <input type="number" id="custom_minutes" class="form-control" min="0" max="1440" value="3" style="max-width: 100px;" placeholder="Min">
+                        <span>min</span>
+                        <input type="number" id="custom_seconds" class="form-control" min="0" max="59" value="50" style="max-width: 100px;" placeholder="Sec">
+                        <span>sec</span>
+                    </div>
+                    <small class="text-muted">Minimum total: 1 minute (60 seconds)</small>
+                    <div id="custom-preview" class="text-muted mt-1"></div>
+                </div>
+
+                <!-- Pings per day mode -->
+                <div class="form-group" id="mode-pings" style="display: none;">
+                    <label for="pings_per_day">Pings per day</label>
+                    <input type="number" id="pings_per_day" class="form-control" min="1" max="1440" value="100" style="max-width: 160px;">
+                    <small class="text-muted">1–1440 (max once per minute)</small>
+                    <div id="pings-preview" class="text-muted mt-1"></div>
                 </div>
 
                 <div class="flex gap-2 mt-3">
@@ -93,20 +131,105 @@
             const testResults = document.getElementById('test-results');
             const testContent = document.getElementById('test-content');
 
+            const modePreset = document.getElementById('mode-preset');
+            const modeCustom = document.getElementById('mode-custom');
+            const modePings = document.getElementById('mode-pings');
+
+            function getSelectedMode() {
+                const el = document.querySelector('input[name="interval_mode"]:checked');
+                return el ? el.value : 'preset';
+            }
+
+            function formatHumanInterval(totalSeconds) {
+                const m = Math.floor(totalSeconds / 60);
+                const s = totalSeconds % 60;
+                if (m > 0 && s > 0) return `≈ every ${m} min ${s} sec`;
+                if (m > 0) return `≈ every ${m} min`;
+                return `≈ every ${s} sec`;
+            }
+
+            function updatePreviews() {
+                // Custom preview
+                const mins = parseInt(document.getElementById('custom_minutes').value, 10) || 0;
+                const secs = parseInt(document.getElementById('custom_seconds').value, 10) || 0;
+                const total = mins * 60 + secs;
+                const customPreview = document.getElementById('custom-preview');
+                if (total < 60) {
+                    customPreview.textContent = 'Too short — minimum is 1 minute';
+                } else {
+                    customPreview.textContent = formatHumanInterval(total);
+                }
+
+                // Pings per day preview
+                const ppd = parseInt(document.getElementById('pings_per_day').value, 10) || 0;
+                const pingsPreview = document.getElementById('pings-preview');
+                if (ppd < 1 || ppd > 1440) {
+                    pingsPreview.textContent = 'Enter a number between 1 and 1440';
+                } else {
+                    const interval = Math.floor(86400 / ppd);
+                    pingsPreview.textContent = formatHumanInterval(interval);
+                }
+            }
+
+            function switchMode() {
+                const mode = getSelectedMode();
+                modePreset.style.display = mode === 'preset' ? 'block' : 'none';
+                modeCustom.style.display = mode === 'custom' ? 'block' : 'none';
+                modePings.style.display = mode === 'pings_per_day' ? 'block' : 'none';
+                updatePreviews();
+            }
+
+            document.querySelectorAll('input[name="interval_mode"]').forEach(r => {
+                r.addEventListener('change', switchMode);
+            });
+            document.getElementById('custom_minutes').addEventListener('input', updatePreviews);
+            document.getElementById('custom_seconds').addEventListener('input', updatePreviews);
+            document.getElementById('pings_per_day').addEventListener('input', updatePreviews);
+            switchMode();
+
+            function getIntervalFields() {
+                const mode = getSelectedMode();
+
+                if (mode === 'preset') {
+                    const minutes = parseInt(document.getElementById('interval_preset').value, 10);
+                    return { interval_minutes: minutes };
+                }
+
+                if (mode === 'custom') {
+                    const mins = parseInt(document.getElementById('custom_minutes').value, 10) || 0;
+                    const secs = parseInt(document.getElementById('custom_seconds').value, 10) || 0;
+                    if (secs < 0 || secs > 59) {
+                        throw new Error('Seconds must be between 0 and 59');
+                    }
+                    const total = mins * 60 + secs;
+                    if (total < 60) {
+                        throw new Error('Custom interval must be at least 60 seconds (1 minute)');
+                    }
+                    return { interval_seconds: total };
+                }
+
+                // pings_per_day
+                const ppd = parseInt(document.getElementById('pings_per_day').value, 10);
+                if (!ppd || ppd < 1 || ppd > 1440) {
+                    throw new Error('Pings per day must be an integer between 1 and 1440');
+                }
+                return { pings_per_day: ppd };
+            }
+
             function getPayload() {
                 const baseUrl = document.getElementById('base_url').value.trim();
                 const endpointsRaw = document.getElementById('endpoints').value.trim();
                 const endpoints = endpointsRaw
                     ? endpointsRaw.split(',').map(e => e.trim()).filter(Boolean)
                     : ['/health'];
-                const intervalMinutes = parseInt(document.getElementById('interval').value, 10);
                 const method = document.getElementById('method').value;
+                const intervalFields = getIntervalFields();
 
                 return {
                     base_url: baseUrl,
                     endpoints: endpoints,
-                    interval_minutes: intervalMinutes,
-                    method: method
+                    method: method,
+                    ...intervalFields
                 };
             }
 
@@ -114,7 +237,14 @@
                 e.preventDefault();
                 App.hideAlert('service-alert');
 
-                const payload = getPayload();
+                let payload;
+                try {
+                    payload = getPayload();
+                } catch (err) {
+                    App.showAlert('service-alert', err.message, 'error');
+                    return;
+                }
+
                 if (!payload.base_url) {
                     App.showAlert('service-alert', 'Base URL is required', 'error');
                     return;
@@ -135,20 +265,26 @@
             document.getElementById('test-btn').addEventListener('click', async () => {
                 App.hideAlert('service-alert');
 
-                const payload = getPayload();
-                if (!payload.base_url) {
+                const baseUrl = document.getElementById('base_url').value.trim();
+                if (!baseUrl) {
                     App.showAlert('service-alert', 'Enter a Base URL before testing', 'error');
                     return;
                 }
+
+                const endpointsRaw = document.getElementById('endpoints').value.trim();
+                const endpoints = endpointsRaw
+                    ? endpointsRaw.split(',').map(e => e.trim()).filter(Boolean)
+                    : ['/health'];
+                const method = document.getElementById('method').value;
 
                 App.setLoading('test-btn', true, 'Test Now');
                 testResults.style.display = 'none';
 
                 try {
                     const data = await ApiClient.post('/test', {
-                        base_url: payload.base_url,
-                        endpoints: payload.endpoints,
-                        method: payload.method
+                        base_url: baseUrl,
+                        endpoints: endpoints,
+                        method: method
                     });
 
                     let html = '<div class="table-responsive"><table class="table"><thead><tr>'
@@ -161,7 +297,7 @@
                             ? '<span class="badge badge-success">OK</span>'
                             : '<span class="badge badge-error">FAIL</span>';
                         html += `<tr>
-                            <td><span class="badge badge-muted">${r.method || payload.method}</span></td>
+                            <td><span class="badge badge-muted">${r.method || method}</span></td>
                             <td><code>${r.endpoint || '/'}</code><br><small>${r.url || ''}</small></td>
                             <td>${r.status_code ?? '—'}</td>
                             <td>${r.response_time_ms} ms</td>
