@@ -97,7 +97,7 @@ def status():
     uptime_seconds = time.time() - start_time
     return jsonify({
         "status": "ok",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "uptime_seconds": int(uptime_seconds),
         "users_count": len(db_users),
         "services_count": len(db_services),
@@ -197,8 +197,43 @@ def _normalize_method(method: Optional[str]) -> str:
         return "GET"
     return m
 
+def _parse_interval(data: dict) -> tuple:
+    """
+    Parse interval from request body.
+    Returns (interval_seconds, error_message).
+    error_message is None on success.
+    """
+    interval_seconds = data.get("interval_seconds")
+    interval_minutes = data.get("interval_minutes")
+    pings_per_day = data.get("pings_per_day")
+
+    if interval_seconds is not None:
+        try:
+            interval = int(interval_seconds)
+        except (TypeError, ValueError):
+            return None, "interval_seconds must be an integer"
+    elif interval_minutes is not None:
+        try:
+            interval = int(interval_minutes) * 60
+        except (TypeError, ValueError):
+            return None, "interval_minutes must be an integer"
+    elif pings_per_day is not None:
+        try:
+            ppd = int(pings_per_day)
+        except (TypeError, ValueError):
+            return None, "pings_per_day must be an integer"
+        if ppd < 1 or ppd > 1440:
+            return None, "pings_per_day must be between 1 and 1440"
+        interval = int(86400 / ppd)
+    else:
+        interval = 840  # default 14 minutes
+
+    if interval < 60:
+        return None, "Interval must be at least 60 seconds (1 minute)"
+
+    return interval, None
+
 def _do_ping(url: str, method: str = "GET") -> dict:
-    """Ping a single URL with the given HTTP method."""
     method = _normalize_method(method)
     start = time.time()
     try:
@@ -225,12 +260,11 @@ def _do_ping(url: str, method: str = "GET") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Test-before-create (no service ID required)
+# Test-before-create
 # ---------------------------------------------------------------------------
 @app.route("/api/test", methods=["POST"])
 @require_auth
 def test_url():
-    """Test one or more URLs without saving a service."""
     data = request.json or {}
 
     base_url = data.get("base_url") or data.get("url")
@@ -278,21 +312,9 @@ def create_service():
     if not base_url:
         return jsonify({"error": "base_url is required"}), 400
 
-    interval_seconds = data.get("interval_seconds")
-    interval_minutes = data.get("interval_minutes")
-    pings_per_day = data.get("pings_per_day")
-
-    if interval_seconds:
-        interval = int(interval_seconds)
-    elif interval_minutes:
-        interval = int(interval_minutes) * 60
-    elif pings_per_day:
-        interval = int(86400 / max(1, int(pings_per_day)))
-    else:
-        interval = 840
-
-    if interval < 60:
-        return jsonify({"error": "Interval must be at least 60 seconds"}), 400
+    interval, err = _parse_interval(data)
+    if err:
+        return jsonify({"error": err}), 400
 
     service_id = str(uuid.uuid4())
     service = Service(
@@ -330,12 +352,12 @@ def update_service(service_id):
         service.endpoints = data["endpoints"]
     if "method" in data:
         service.method = _normalize_method(data["method"])
-    if "interval_seconds" in data:
-        service.interval_seconds = int(data["interval_seconds"])
-    elif "interval_minutes" in data:
-        service.interval_seconds = int(data["interval_minutes"]) * 60
-    elif "pings_per_day" in data:
-        service.interval_seconds = int(86400 / max(1, int(data["pings_per_day"])))
+
+    if any(k in data for k in ("interval_seconds", "interval_minutes", "pings_per_day")):
+        interval, err = _parse_interval(data)
+        if err:
+            return jsonify({"error": err}), 400
+        service.interval_seconds = interval
 
     return jsonify(service.__dict__), 200
 
