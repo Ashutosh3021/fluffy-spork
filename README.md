@@ -99,12 +99,24 @@ python app.py
 - `DELETE /api/services/<id>` — Delete service
 - `POST /api/services/<id>/test` — Immediate test run
 
+### Health & Status
+- `GET /health` — Simple health check for keep-alive
+- `GET /api/status` — Basic status info (version, uptime, user/service counts)
+
 ### History & Analytics
 - `GET /api/history` — Recent ping history (optional `?service_id=`)
 - `GET /api/services/<id>/analytics` — Success rate & avg response time
 
 > All endpoints except signup and login require header:  
 > `Authorization: Bearer <token>`
+
+---
+
+## CORS Configuration
+
+CORS is enabled by default to allow requests from the following origins:
+- `https://keep-awake1.vercel.app`
+- `http://localhost:*` (for local development)
 
 ---
 

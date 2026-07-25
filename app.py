@@ -7,8 +7,11 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Optional, Dict
 
+import re
 import requests
 from flask import Flask, request, jsonify
+from flask_cors import CORS
+from datetime import timezone
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -25,6 +28,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 app.config['JSON_SORT_KEYS'] = False
+
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "https://keep-awake1.vercel.app",
+            re.compile(r"http://localhost:.*")
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+    }
+})
 
 # ---------------------------------------------------------------------------
 # Data Models (In-Memory)
@@ -70,10 +84,23 @@ db_ping_records: List[PingRecord] = []  # append-only list
 PORT = int(os.environ.get("PORT", "8080"))
 SELF_URL = os.environ.get("SELF_URL", "")
 REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "15"))
+start_time = time.time()
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "timestamp": datetime.utcnow().isoformat() + "Z"}), 200
+    return jsonify({"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}), 200
+
+@app.route("/api/status")
+def status():
+    # A simple status endpoint that returns basic info
+    uptime_seconds = time.time() - start_time if 'start_time' in globals() else 0
+    return jsonify({
+        "status": "ok",
+        "version": "1.0.0",
+        "uptime_seconds": int(uptime_seconds),
+        "users_count": len(db_users),
+        "services_count": len(db_services),
+    }), 200
 
 
 # ---------------------------------------------------------------------------
@@ -354,7 +381,7 @@ def ping_url(url: str, service_id: str, endpoint: str):
         record = PingRecord(
             id=str(uuid.uuid4()),
             service_id=service_id,
-            timestamp=datetime.utcnow().isoformat() + "Z",
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             endpoint=endpoint,
             status_code=response.status_code,
             success=True,
@@ -367,7 +394,7 @@ def ping_url(url: str, service_id: str, endpoint: str):
         record = PingRecord(
             id=str(uuid.uuid4()),
             service_id=service_id,
-            timestamp=datetime.utcnow().isoformat() + "Z",
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             endpoint=endpoint,
             status_code=None,
             success=False,
