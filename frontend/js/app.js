@@ -47,6 +47,14 @@ class App {
                 Auth.logout();
             });
         }
+
+        const toggler = document.getElementById('navbar-toggler');
+        const nav = document.getElementById('navbar-nav');
+        if (toggler && nav) {
+            toggler.addEventListener('click', () => {
+                nav.classList.toggle('show');
+            });
+        }
     }
 
     static escapeHtml(unsafe) {
