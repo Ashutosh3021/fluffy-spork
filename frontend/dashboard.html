@@ -131,14 +131,14 @@
                     return;
                 }
 
-                let html = `<button class="btn btn-sm btn-outline" onclick="window.changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>&lt;</button>`;
+                let html = `<button class="btn btn-sm btn-outline" onclick="window.changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>◀</button>`;
                 
                 for (let i = 1; i <= totalPages; i++) {
                     const activeClass = i === currentPage ? 'btn-primary' : 'btn-outline';
                     html += `<button class="btn btn-sm ${activeClass}" onclick="window.changePage(${i})">${i}</button>`;
                 }
                 
-                html += `<button class="btn btn-sm btn-outline" onclick="window.changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>&gt;</button>`;
+                html += `<button class="btn btn-sm btn-outline" onclick="window.changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>▶</button>`;
                 
                 container.innerHTML = html;
             };
