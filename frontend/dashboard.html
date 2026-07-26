@@ -156,11 +156,14 @@
                     // Fetch services
                     servicesList = await ApiClient.get('/services');
                     document.getElementById('stat-total').textContent = servicesList.length;
-                    const activeCount = servicesList.filter(s => s.active).length;
+                    // All stored services are considered active
+                    const activeCount = servicesList.length;
                     document.getElementById('stat-active').textContent = activeCount;
 
                     // Fetch history
-                    allHistory = await ApiClient.get('/history?limit=50');
+                    const rawHistory = await ApiClient.get('/history?limit=50');
+                    // Enforce maximum of 50 items (10 pages max)
+                    allHistory = rawHistory.slice(0, 50);
 
                     if (allHistory.length > 0) {
                         // Calculate basic success rate from recent history
