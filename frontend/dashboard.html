@@ -97,26 +97,26 @@
                         document.getElementById('stat-success').textContent = 'N/A';
                     } else {
                         tbody.innerHTML = history.map(h => {
-                            const statusBadge = h.status === 'success'
+                            const statusBadge = h.success
                                 ? '<span class="badge badge-success">Success</span>'
                                 : '<span class="badge badge-error">Failed</span>';
 
                             // Find service name
                             const service = services.find(s => s.id === h.service_id);
-                            const serviceName = service ? service.name : `Service #${h.service_id}`;
+                            const serviceName = service ? service.base_url : `Service #${h.service_id}`;
 
                             return `
                                 <tr>
                                     <td>${App.formatDate(h.timestamp)}</td>
                                     <td>${App.escapeHtml(serviceName)}</td>
                                     <td>${statusBadge}</td>
-                                    <td>${h.duration_ms ? h.duration_ms + ' ms' : '-'}</td>
+                                    <td>${h.response_time_ms ? h.response_time_ms + ' ms' : '-'}</td>
                                 </tr>
                             `;
                         }).join('');
 
                         // Calculate basic success rate from recent history
-                        const successful = history.filter(h => h.status === 'success').length;
+                        const successful = history.filter(h => h.success).length;
                         const rate = Math.round((successful / history.length) * 100);
                         document.getElementById('stat-success').textContent = `${rate}%`;
                     }
