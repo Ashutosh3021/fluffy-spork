@@ -383,13 +383,14 @@ def test_service(service_id):
 def get_history():
     user = get_current_user()
     service_id = request.args.get("service_id")
+    limit = request.args.get("limit", 100, type=int)
 
     if service_id:
         service = store.service_get(service_id)
         if not service or service["user_id"] != user["id"]:
             return jsonify({"error": "Service not found or unauthorized"}), 404
 
-    records = store.pings_for_user(user["id"], service_id=service_id, limit=100)
+    records = store.pings_for_user(user["id"], service_id=service_id, limit=limit)
     return jsonify(records), 200
 
 
