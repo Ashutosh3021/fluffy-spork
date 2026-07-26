@@ -70,6 +70,7 @@
                     </tbody>
                 </table>
             </div>
+            <div id="pagination-controls" class="flex justify-center gap-1 mt-2 mb-2"></div>
         </div>
     </main>
 
@@ -80,46 +81,98 @@
         document.addEventListener('DOMContentLoaded', async () => {
             Auth.requireAuth();
 
+            let allHistory = [];
+            let servicesList = [];
+            let currentPage = 1;
+            const itemsPerPage = 5;
+
+            const renderHistory = () => {
+                const tbody = document.getElementById('history-table-body');
+                const paginationControls = document.getElementById('pagination-controls');
+
+                if (allHistory.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No history available yet.</td></tr>';
+                    paginationControls.innerHTML = '';
+                    return;
+                }
+
+                const totalPages = Math.ceil(allHistory.length / itemsPerPage);
+                if (currentPage > totalPages) currentPage = totalPages;
+                if (currentPage < 1) currentPage = 1;
+
+                const startIndex = (currentPage - 1) * itemsPerPage;
+                const pageHistory = allHistory.slice(startIndex, startIndex + itemsPerPage);
+
+                tbody.innerHTML = pageHistory.map(h => {
+                    const statusBadge = h.success
+                        ? '<span class="badge badge-success">Success</span>'
+                        : '<span class="badge badge-error">Failed</span>';
+
+                    const service = servicesList.find(s => s.id === h.service_id);
+                    const serviceName = service ? service.base_url : `Service #${h.service_id}`;
+
+                    return `
+                        <tr>
+                            <td>${App.formatDate(h.timestamp)}</td>
+                            <td>${App.escapeHtml(serviceName)}</td>
+                            <td>${statusBadge}</td>
+                            <td>${h.response_time_ms ? h.response_time_ms + ' ms' : '-'}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                renderPaginationControls(totalPages);
+            };
+
+            const renderPaginationControls = (totalPages) => {
+                const container = document.getElementById('pagination-controls');
+                if (totalPages <= 1) {
+                    container.innerHTML = '';
+                    return;
+                }
+
+                let html = `<button class="btn btn-sm btn-outline" onclick="window.changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>&lt;</button>`;
+
+                for (let i = 1; i <= totalPages; i++) {
+                    const activeClass = i === currentPage ? 'btn-primary' : 'btn-outline';
+                    html += `<button class="btn btn-sm ${activeClass}" onclick="window.changePage(${i})">${i}</button>`;
+                }
+
+                html += `<button class="btn btn-sm btn-outline" onclick="window.changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>&gt;</button>`;
+
+                container.innerHTML = html;
+            };
+
+            window.changePage = (newPage) => {
+                const totalPages = Math.ceil(allHistory.length / itemsPerPage);
+                if (newPage >= 1 && newPage <= totalPages) {
+                    currentPage = newPage;
+                    renderHistory();
+                }
+            };
+
             const loadDashboard = async () => {
                 try {
                     // Fetch services
-                    const services = await ApiClient.get('/services');
-                    document.getElementById('stat-total').textContent = services.length;
-                    const activeCount = services.filter(s => s.active).length;
+                    servicesList = await ApiClient.get('/services');
+                    document.getElementById('stat-total').textContent = servicesList.length;
+                    const activeCount = servicesList.filter(s => s.active).length;
                     document.getElementById('stat-active').textContent = activeCount;
 
                     // Fetch history
-                    const history = await ApiClient.get('/history?limit=10');
-                    const tbody = document.getElementById('history-table-body');
+                    allHistory = await ApiClient.get('/history?limit=50');
 
-                    if (history.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No history available yet.</td></tr>';
-                        document.getElementById('stat-success').textContent = 'N/A';
-                    } else {
-                        tbody.innerHTML = history.map(h => {
-                            const statusBadge = h.status === 'success'
-                                ? '<span class="badge badge-success">Success</span>'
-                                : '<span class="badge badge-error">Failed</span>';
-
-                            // Find service name
-                            const service = services.find(s => s.id === h.service_id);
-                            const serviceName = service ? service.name : `Service #${h.service_id}`;
-
-                            return `
-                                <tr>
-                                    <td>${App.formatDate(h.timestamp)}</td>
-                                    <td>${App.escapeHtml(serviceName)}</td>
-                                    <td>${statusBadge}</td>
-                                    <td>${h.duration_ms ? h.duration_ms + ' ms' : '-'}</td>
-                                </tr>
-                            `;
-                        }).join('');
-
+                    if (allHistory.length > 0) {
                         // Calculate basic success rate from recent history
-                        const successful = history.filter(h => h.status === 'success').length;
-                        const rate = Math.round((successful / history.length) * 100);
+                        const successful = allHistory.filter(h => h.success).length;
+                        const rate = Math.round((successful / allHistory.length) * 100);
                         document.getElementById('stat-success').textContent = `${rate}%`;
+                    } else {
+                        document.getElementById('stat-success').textContent = 'N/A';
                     }
+
+                    currentPage = 1;
+                    renderHistory();
                 } catch (error) {
                     App.showAlert('dashboard-alert', 'Failed to load dashboard data: ' + error.message, 'error');
                 }
